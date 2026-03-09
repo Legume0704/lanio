@@ -1,0 +1,22 @@
+# Node
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Rust
+target/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

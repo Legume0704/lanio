@@ -1,0 +1,19 @@
+{
+  "TCP": {
+    "443": {
+      "HTTPS": true
+    }
+  },
+  "Web": {
+    "lanio.YOUR-TAILSCALE-DOMAIN.ts.net:443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://lanio:8078"
+        }
+      }
+    }
+  },
+  "AllowFunnel": {
+    "lanio.YOUR-TAILSCALE-DOMAIN.ts.net:443": true
+  }
+}

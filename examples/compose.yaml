@@ -1,0 +1,36 @@
+services:
+  lanio:
+    image: ghcr.io/Legume0704/lanio:latest
+    container_name: lanio
+    env_file: .env
+    ports:
+      - "8078:8078"
+    volumes:
+      # Left-hand side is the directory of your media on your host system
+      # In this example, the media on the host system is in /mnt/media
+      - /mnt/media:/media:ro
+    restart: unless-stopped
+
+# Tailscale Setup for direct Stremio installation
+# ! The following will make your media available on the public internet!
+# Requires ts-serve.json in same directory as this file
+# Authenticate via TS_AUTHKEY in your .env file
+
+#   tailscale:
+#     image: tailscale/tailscale:latest
+#     container_name: tailscale
+#     env_file: .env
+#     environment:
+#       - TS_HOSTNAME=lanio
+#       - TS_SERVE_CONFIG=/config/ts-serve.json
+#       - TS_STATE_DIR=/var/lib/tailscale
+#     volumes:
+#       - tailscale-data:/var/lib/tailscale
+#       - /dev/net/tun:/dev/net/tun
+#       - ./ts-serve.json:/config/ts-serve.json:ro
+#     cap_add:
+#       - NET_ADMIN
+#       - SYS_MODULE
+#     restart: unless-stopped
+# volumes:
+#   tailscale-data:
