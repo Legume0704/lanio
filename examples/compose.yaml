@@ -1,6 +1,6 @@
 services:
   lanio:
-    image: ghcr.io/Legume0704/lanio:latest
+    image: ghcr.io/legume0704/lanio:latest
     container_name: lanio
     env_file: .env
     ports:
