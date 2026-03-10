@@ -1,0 +1,43 @@
+name: Version Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR version
+        id: pr
+        run: |
+          version=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Get main version
+        id: main
+        run: |
+          version=$(git show origin/main:Cargo.toml | grep '^version' | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Check version bumped
+        run: |
+          pr="${{ steps.pr.outputs.version }}"
+          main="${{ steps.main.outputs.version }}"
+          echo "main: $main"
+          echo "pr:   $pr"
+          if [ "$pr" = "$main" ]; then
+            echo "::error::Version in Cargo.toml ($pr) must be bumped before merging."
+            exit 1
+          fi
+
+      - name: Check changelog updated
+        run: |
+          if ! git diff origin/main...HEAD --name-only | grep -q '^Changelog.md$'; then
+            echo "::error::Changelog.md must be updated before merging."
+            exit 1
+          fi
