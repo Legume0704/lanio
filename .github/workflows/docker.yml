@@ -2,7 +2,7 @@ name: Build and Push Docker Image
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
 
 jobs:
   tag:
