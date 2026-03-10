@@ -30,7 +30,7 @@ It's highly recommended to run Lanio as a docker container. Example compose and 
 
    ```bash
    curl -O https://raw.githubusercontent.com/Legume0704/lanio/refs/heads/main/examples/compose.yaml
-   curl -o .env https://raw.githubusercontent.com/Legume0704/lanio/refs/heads/main/examples/.env.sample
+   curl -o .env https://raw.githubusercontent.com/Legume0704/lanio/refs/heads/main/examples/.env.example
    ```
 
 2. Edit the files to your liking. `TMDB_API_KEY` is the only required environment variable to get running.
