@@ -201,6 +201,12 @@ impl MediaScanner {
             return Ok(());
         }
 
+        let result = self.do_scan().await;
+        self.scanning.store(false, Ordering::SeqCst);
+        result
+    }
+
+    async fn do_scan(&self) -> anyhow::Result<()> {
         tracing::info!("Scanning media directory: {:?}", self.config.media_path);
 
         // Scan directory for video files
@@ -231,7 +237,6 @@ impl MediaScanner {
             failed
         );
 
-        self.scanning.store(false, Ordering::SeqCst);
         Ok(())
     }
 
@@ -359,5 +364,51 @@ impl MediaScanner {
         }
 
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::index::MediaIndex;
+    use crate::metadata::TmdbClient;
+    use std::sync::atomic::Ordering;
+
+    fn make_scanner() -> MediaScanner {
+        let config = Arc::new(Config {
+            media_path: std::path::PathBuf::from("/tmp/lanio_test_nonexistent"),
+            port: 8078,
+            base_url: None,
+            public_url: None,
+            tmdb_api_key: "fake".to_string(),
+        });
+        MediaScanner::new(
+            Arc::new(MediaIndex::new()),
+            Arc::new(TmdbClient::new("fake".to_string())),
+            config,
+        )
+    }
+
+    #[tokio::test]
+    async fn scanning_flag_false_after_scan_completes() {
+        let scanner = make_scanner();
+        assert!(!scanner.scanning.load(Ordering::SeqCst));
+        // scan() should always reset the flag, even if do_scan returns an error
+        let _ = scanner.scan().await;
+        assert!(!scanner.scanning.load(Ordering::SeqCst), "scanning flag must be false after scan() returns");
+    }
+
+    #[tokio::test]
+    async fn concurrent_scan_skipped_while_in_progress() {
+        let scanner = make_scanner();
+        // Simulate a scan already in progress
+        scanner.scanning.store(true, Ordering::SeqCst);
+        // A second call should return Ok immediately without touching the flag
+        let result = scanner.scan().await;
+        assert!(result.is_ok());
+        assert!(scanner.scanning.load(Ordering::SeqCst), "flag should remain true — only the original caller should reset it");
+        // Clean up
+        scanner.scanning.store(false, Ordering::SeqCst);
     }
 }
