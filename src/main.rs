@@ -1,3 +1,4 @@
+mod auth;
 mod config;
 mod error;
 mod index;
@@ -40,6 +41,11 @@ async fn main() -> anyhow::Result<()> {
     if let Some(ref public_url) = config.public_url {
         tracing::info!("Public URL: {}", public_url);
     }
+    if config.auth_token.is_some() {
+        tracing::info!("Authentication: enabled (PASSWORD is set)");
+    } else {
+        tracing::info!("Authentication: disabled");
+    }
     tracing::info!("{}", separator);
 
     let config = Arc::new(config);
@@ -79,15 +85,8 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("{}", separator);
     tracing::info!("Server running on {}", addr);
-    tracing::info!("Manifest URL: {}/manifest.json", server_url);
+    tracing::info!("Public URL: {}", server_url);
     tracing::info!("Health check: {}/health", server_url);
-    tracing::info!("{}", separator);
-    tracing::info!("");
-    tracing::info!("To add this add-on to Stremio:");
-    tracing::info!("1. Open Stremio");
-    tracing::info!("2. Go to Add-ons (puzzle icon)");
-    tracing::info!("3. Click \"Community Add-ons\"");
-    tracing::info!("4. Paste this URL: {}/manifest.json", server_url);
     tracing::info!("{}", separator);
 
     // Run server with graceful shutdown

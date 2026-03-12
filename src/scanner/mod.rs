@@ -382,6 +382,8 @@ mod tests {
             base_url: None,
             public_url: None,
             tmdb_api_key: "fake".to_string(),
+            password: None,
+            auth_token: None,
         });
         MediaScanner::new(
             Arc::new(MediaIndex::new()),

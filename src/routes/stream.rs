@@ -6,6 +6,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use serde::Deserialize;
 use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
 use std::sync::Arc;
@@ -40,9 +41,24 @@ pub struct StreamState {
     pub config: Arc<Config>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct StreamPath {
+    #[serde(rename = "type")]
+    content_type: String,
+    id: String,
+}
+
 pub async fn stream_handler(
-    Path((content_type, id)): Path<(String, String)>,
+    Path(StreamPath { content_type, id }): Path<StreamPath>,
     State(state): State<StreamState>,
+) -> Result<Json<StreamResponse>> {
+    stream_inner(content_type, id, state).await
+}
+
+async fn stream_inner(
+    content_type: String,
+    id: String,
+    state: StreamState,
 ) -> Result<Json<StreamResponse>> {
     // Strip .json extension from id
     let id = id.strip_suffix(".json").unwrap_or(&id).to_string();
@@ -120,7 +136,11 @@ pub async fn stream_handler(
         .map(|s| s.trim_end_matches('/').to_string())
         .unwrap_or_else(|| format!("http://localhost:{}", state.config.port));
 
-    let stream_url = format!("{}/video?path={}", base_url, encoded_path);
+    let stream_url = if let Some(ref token) = state.config.auth_token {
+        format!("{}/{}/video?path={}", base_url, token, encoded_path)
+    } else {
+        format!("{}/video?path={}", base_url, encoded_path)
+    };
 
     let mut display = format!("🎞️ {}", file_info.title);
     if let Some(file_name) = file_info.file_path.file_name().and_then(|n| n.to_str()) {

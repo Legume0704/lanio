@@ -22,8 +22,8 @@ pub struct Catalog {
     pub r#type: String,
 }
 
-pub async fn get_manifest() -> Json<Manifest> {
-    Json(Manifest {
+fn manifest_data() -> Manifest {
+    Manifest {
         id: "lanio.local.com".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         name: "Lanio".to_string(),
@@ -43,5 +43,9 @@ pub async fn get_manifest() -> Json<Manifest> {
                 r#type: "series".to_string(),
             },
         ],
-    })
+    }
+}
+
+pub async fn get_manifest() -> Json<Manifest> {
+    Json(manifest_data())
 }

@@ -2,7 +2,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::scanner::MediaScanner;
@@ -27,10 +27,21 @@ pub struct CatalogState {
     pub scanner: Arc<MediaScanner>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct CatalogPath {
+    #[serde(rename = "type")]
+    content_type: String,
+    id: String,
+}
+
 pub async fn catalog_handler(
-    Path((content_type, catalog_id)): Path<(String, String)>,
+    Path(CatalogPath { content_type, id: catalog_id }): Path<CatalogPath>,
     State(state): State<CatalogState>,
 ) -> Json<CatalogResponse> {
+    Json(catalog_inner(content_type, catalog_id, &state))
+}
+
+fn catalog_inner(content_type: String, catalog_id: String, state: &CatalogState) -> CatalogResponse {
     // Strip .json extension if present
     let catalog_id = catalog_id.strip_suffix(".json").unwrap_or(&catalog_id);
 
@@ -69,5 +80,5 @@ pub async fn catalog_handler(
 
     tracing::debug!("Returning {} items", metas.len());
 
-    Json(CatalogResponse { metas })
+    CatalogResponse { metas }
 }

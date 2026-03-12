@@ -11,13 +11,13 @@ use axum::{
 use base64::{engine::general_purpose, Engine as _};
 use range::parse_range_header;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
-fn validate_path(file_path: &Path, media_path: &Path) -> Result<PathBuf> {
+fn validate_path(file_path: &FsPath, media_path: &FsPath) -> Result<PathBuf> {
     let resolved = file_path.canonicalize().map_err(|e| {
         AppError::InvalidPath(format!("Cannot resolve path: {}", e))
     })?;
@@ -43,6 +43,14 @@ pub struct StreamerState {
 pub async fn video_handler(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<StreamerState>,
+    headers: HeaderMap,
+) -> Result<Response> {
+    video_inner(params, state, headers).await
+}
+
+async fn video_inner(
+    params: HashMap<String, String>,
+    state: StreamerState,
     headers: HeaderMap,
 ) -> Result<Response> {
     // Decode base64 path
