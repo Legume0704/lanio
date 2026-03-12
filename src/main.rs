@@ -1,16 +1,8 @@
-mod auth;
-mod config;
-mod error;
-mod index;
-mod metadata;
-mod routes;
-mod scanner;
-mod streamer;
-
-use config::Config;
-use index::MediaIndex;
-use metadata::TmdbClient;
-use scanner::MediaScanner;
+use lanio::config::Config;
+use lanio::index::MediaIndex;
+use lanio::metadata::TmdbClient;
+use lanio::routes;
+use lanio::scanner::MediaScanner;
 use std::sync::Arc;
 use tokio::signal;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

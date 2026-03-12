@@ -28,20 +28,27 @@ pub struct CatalogState {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct CatalogPath {
+pub struct CatalogPath {
     #[serde(rename = "type")]
     content_type: String,
     id: String,
 }
 
 pub async fn catalog_handler(
-    Path(CatalogPath { content_type, id: catalog_id }): Path<CatalogPath>,
+    Path(CatalogPath {
+        content_type,
+        id: catalog_id,
+    }): Path<CatalogPath>,
     State(state): State<CatalogState>,
 ) -> Json<CatalogResponse> {
     Json(catalog_inner(content_type, catalog_id, &state))
 }
 
-fn catalog_inner(content_type: String, catalog_id: String, state: &CatalogState) -> CatalogResponse {
+fn catalog_inner(
+    content_type: String,
+    catalog_id: String,
+    state: &CatalogState,
+) -> CatalogResponse {
     // Strip .json extension if present
     let catalog_id = catalog_id.strip_suffix(".json").unwrap_or(&catalog_id);
 
