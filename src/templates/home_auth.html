@@ -144,13 +144,9 @@
 
     async function computeToken(password) {
       const enc = new TextEncoder();
-      const [h1, h2] = await Promise.all([
-        crypto.subtle.digest('SHA-512', enc.encode('lanio_auth_a:' + password)),
-        crypto.subtle.digest('SHA-512', enc.encode('lanio_auth_b:' + password)),
-      ]);
-      const hex = buf => Array.from(new Uint8Array(buf))
+      const buf = await crypto.subtle.digest('SHA-512', enc.encode('lanio_auth:' + password));
+      return Array.from(new Uint8Array(buf))
         .map(b => b.toString(16).padStart(2, '0')).join('');
-      return hex(h1) + hex(h2);
     }
 
     async function unlock() {
