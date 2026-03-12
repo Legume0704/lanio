@@ -59,3 +59,65 @@ impl Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with_password(password: &str) -> Config {
+        Config {
+            media_path: default_media_path(),
+            port: default_port(),
+            base_url: None,
+            public_url: None,
+            tmdb_api_key: String::new(),
+            password: Some(password.to_string()),
+            auth_token: Some(compute_token(password)),
+        }
+    }
+
+    fn config_no_auth() -> Config {
+        Config {
+            media_path: default_media_path(),
+            port: default_port(),
+            base_url: None,
+            public_url: None,
+            tmdb_api_key: String::new(),
+            password: None,
+            auth_token: None,
+        }
+    }
+
+    #[test]
+    fn valid_token_accepted() {
+        let config = config_with_password("secret");
+        let token = compute_token("secret");
+        assert!(config.is_valid_token(&token));
+    }
+
+    #[test]
+    fn wrong_token_rejected() {
+        let config = config_with_password("secret");
+        let wrong = compute_token("wrong_password");
+        assert!(!config.is_valid_token(&wrong));
+    }
+
+    #[test]
+    fn no_auth_accepts_any_token() {
+        let config = config_no_auth();
+        assert!(config.is_valid_token("anything"));
+        assert!(config.is_valid_token(""));
+    }
+
+    #[test]
+    fn empty_string_token_rejected_when_auth_set() {
+        let config = config_with_password("secret");
+        assert!(!config.is_valid_token(""));
+    }
+
+    #[test]
+    fn auth_token_derived_from_password() {
+        let config = config_with_password("mypass");
+        assert_eq!(config.auth_token.as_deref(), Some(compute_token("mypass").as_str()));
+    }
+}
