@@ -1,10 +1,12 @@
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     Json,
 };
 use serde::Serialize;
 use std::sync::Arc;
 
+use crate::config::Config;
 use crate::scanner::MediaScanner;
 
 #[derive(Debug, Serialize)]
@@ -25,12 +27,29 @@ pub struct Meta {
 #[derive(Clone)]
 pub struct CatalogState {
     pub scanner: Arc<MediaScanner>,
+    pub config: Arc<Config>,
 }
 
+/// No-auth catalog handler (used when PASSWORD is not configured).
 pub async fn catalog_handler(
     Path((content_type, catalog_id)): Path<(String, String)>,
     State(state): State<CatalogState>,
 ) -> Json<CatalogResponse> {
+    Json(catalog_inner(content_type, catalog_id, &state))
+}
+
+/// Token-validated catalog handler (used when PASSWORD is configured).
+pub async fn catalog_handler_authed(
+    Path((token, content_type, catalog_id)): Path<(String, String, String)>,
+    State(state): State<CatalogState>,
+) -> Result<Json<CatalogResponse>, StatusCode> {
+    if !state.config.is_valid_token(&token) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(Json(catalog_inner(content_type, catalog_id, &state)))
+}
+
+fn catalog_inner(content_type: String, catalog_id: String, state: &CatalogState) -> CatalogResponse {
     // Strip .json extension if present
     let catalog_id = catalog_id.strip_suffix(".json").unwrap_or(&catalog_id);
 
@@ -69,5 +88,5 @@ pub async fn catalog_handler(
 
     tracing::debug!("Returning {} items", metas.len());
 
-    Json(CatalogResponse { metas })
+    CatalogResponse { metas }
 }

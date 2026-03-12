@@ -32,6 +32,9 @@ notify = "6.1"
 dashmap = "5.5"
 moka = { version = "0.12", features = ["future"] }
 
+# Hashing
+sha2 = "0.10"
+
 # Utilities
 base64 = "0.21"
 urlencoding = "2.1"

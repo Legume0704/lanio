@@ -1,3 +1,4 @@
+mod auth;
 mod config;
 mod error;
 mod index;
@@ -39,6 +40,11 @@ async fn main() -> anyhow::Result<()> {
     }
     if let Some(ref public_url) = config.public_url {
         tracing::info!("Public URL: {}", public_url);
+    }
+    if config.auth_token.is_some() {
+        tracing::info!("Authentication: enabled (PASSWORD is set)");
+    } else {
+        tracing::info!("Authentication: disabled");
     }
     tracing::info!("{}", separator);
 
