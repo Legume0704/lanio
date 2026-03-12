@@ -6,6 +6,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use serde::Deserialize;
 use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
 use std::sync::Arc;
@@ -40,22 +41,17 @@ pub struct StreamState {
     pub config: Arc<Config>,
 }
 
-/// No-auth stream handler (used when PASSWORD is not configured).
-pub async fn stream_handler(
-    Path((content_type, id)): Path<(String, String)>,
-    State(state): State<StreamState>,
-) -> Result<Json<StreamResponse>> {
-    stream_inner(content_type, id, state).await
+#[derive(Deserialize)]
+pub(crate) struct StreamPath {
+    #[serde(rename = "type")]
+    content_type: String,
+    id: String,
 }
 
-/// Token-validated stream handler (used when PASSWORD is configured).
-pub async fn stream_handler_authed(
-    Path((token, content_type, id)): Path<(String, String, String)>,
+pub async fn stream_handler(
+    Path(StreamPath { content_type, id }): Path<StreamPath>,
     State(state): State<StreamState>,
 ) -> Result<Json<StreamResponse>> {
-    if !state.config.is_valid_token(&token) {
-        return Err(AppError::NotFound);
-    }
     stream_inner(content_type, id, state).await
 }
 

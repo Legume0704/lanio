@@ -1,12 +1,10 @@
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
     Json,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::config::Config;
 use crate::scanner::MediaScanner;
 
 #[derive(Debug, Serialize)]
@@ -27,26 +25,20 @@ pub struct Meta {
 #[derive(Clone)]
 pub struct CatalogState {
     pub scanner: Arc<MediaScanner>,
-    pub config: Arc<Config>,
 }
 
-/// No-auth catalog handler (used when PASSWORD is not configured).
+#[derive(Deserialize)]
+pub(crate) struct CatalogPath {
+    #[serde(rename = "type")]
+    content_type: String,
+    id: String,
+}
+
 pub async fn catalog_handler(
-    Path((content_type, catalog_id)): Path<(String, String)>,
+    Path(CatalogPath { content_type, id: catalog_id }): Path<CatalogPath>,
     State(state): State<CatalogState>,
 ) -> Json<CatalogResponse> {
     Json(catalog_inner(content_type, catalog_id, &state))
-}
-
-/// Token-validated catalog handler (used when PASSWORD is configured).
-pub async fn catalog_handler_authed(
-    Path((token, content_type, catalog_id)): Path<(String, String, String)>,
-    State(state): State<CatalogState>,
-) -> Result<Json<CatalogResponse>, StatusCode> {
-    if !state.config.is_valid_token(&token) {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    Ok(Json(catalog_inner(content_type, catalog_id, &state)))
 }
 
 fn catalog_inner(content_type: String, catalog_id: String, state: &CatalogState) -> CatalogResponse {

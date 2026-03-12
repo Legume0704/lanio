@@ -1,11 +1,5 @@
-use crate::config::Config;
-use axum::{
-    extract::{Path, State},
-    http::StatusCode,
-    Json,
-};
+use axum::Json;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,18 +46,6 @@ fn manifest_data() -> Manifest {
     }
 }
 
-/// No-auth manifest handler (used when PASSWORD is not configured).
 pub async fn get_manifest() -> Json<Manifest> {
     Json(manifest_data())
-}
-
-/// Token-validated manifest handler (used when PASSWORD is configured).
-pub async fn get_manifest_authed(
-    Path(token): Path<String>,
-    State(config): State<Arc<Config>>,
-) -> Result<Json<Manifest>, StatusCode> {
-    if !config.is_valid_token(&token) {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    Ok(Json(manifest_data()))
 }

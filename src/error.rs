@@ -19,9 +19,6 @@ pub enum AppError {
     #[allow(dead_code)]
     CacheError(String),
 
-    #[error("Not found")]
-    NotFound,
-
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -35,7 +32,6 @@ pub enum AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
-            AppError::NotFound => (StatusCode::NOT_FOUND, "Not found".to_string()),
             AppError::InvalidPath(msg) => (StatusCode::BAD_REQUEST, msg),
             AppError::TmdbError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             AppError::CacheError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),

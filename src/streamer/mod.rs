@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::error::{AppError, Result};
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
+    extract::{Query, State},
     http::{header, HeaderMap, StatusCode},
     response::Response,
 };
@@ -40,25 +40,11 @@ pub struct StreamerState {
     pub config: Arc<Config>,
 }
 
-/// No-auth video handler (used when PASSWORD is not configured).
 pub async fn video_handler(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<StreamerState>,
     headers: HeaderMap,
 ) -> Result<Response> {
-    video_inner(params, state, headers).await
-}
-
-/// Token-validated video handler (used when PASSWORD is configured).
-pub async fn video_handler_authed(
-    Path(token): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
-    State(state): State<StreamerState>,
-    headers: HeaderMap,
-) -> Result<Response> {
-    if !state.config.is_valid_token(&token) {
-        return Err(AppError::NotFound);
-    }
     video_inner(params, state, headers).await
 }
 
