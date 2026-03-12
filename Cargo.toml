@@ -47,6 +47,17 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 envy = "0.4"
 
+[lib]
+name = "lanio"
+path = "src/lib.rs"
+
 [[bin]]
 name = "lanio"
 path = "src/main.rs"
+
+
+[dev-dependencies]
+wiremock = "0.6"
+tempfile = "3"
+tower = { version = "0.4", features = ["util"] }
+http-body-util = "0.1"

@@ -6,8 +6,8 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use serde::Deserialize;
 use base64::{engine::general_purpose, Engine as _};
+use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -42,7 +42,7 @@ pub struct StreamState {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct StreamPath {
+pub struct StreamPath {
     #[serde(rename = "type")]
     content_type: String,
     id: String,
