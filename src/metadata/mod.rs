@@ -45,7 +45,7 @@ impl TmdbClient {
         }
 
         // Rate limit
-        self.rate_limiter.acquire().await;
+        let _permit = self.rate_limiter.acquire().await;
 
         // Search for movie
         let mut url = format!("{}/search/movie", self.base_url);
@@ -74,7 +74,7 @@ impl TmdbClient {
         let movie_id = search_response.results[0].id;
 
         // Get movie details to retrieve IMDb ID
-        self.rate_limiter.acquire().await;
+        let _permit = self.rate_limiter.acquire().await;
 
         url = format!("{}/movie/{}", self.base_url, movie_id);
         let response = self
@@ -114,7 +114,7 @@ impl TmdbClient {
         }
 
         // Rate limit
-        self.rate_limiter.acquire().await;
+        let _permit = self.rate_limiter.acquire().await;
 
         // Search for TV show
         let mut url = format!("{}/search/tv", self.base_url);
@@ -143,7 +143,7 @@ impl TmdbClient {
         let tv_id = search_response.results[0].id;
 
         // Get external IDs to retrieve IMDb ID
-        self.rate_limiter.acquire().await;
+        let _permit = self.rate_limiter.acquire().await;
 
         url = format!("{}/tv/{}/external_ids", self.base_url, tv_id);
         let response = self
@@ -159,7 +159,7 @@ impl TmdbClient {
         let imdb_id = external_ids.imdb_id?;
 
         // Get TV show details to retrieve poster
-        self.rate_limiter.acquire().await;
+        let _permit = self.rate_limiter.acquire().await;
 
         let details_url = format!("{}/tv/{}", self.base_url, tv_id);
         let details_response = self
@@ -198,7 +198,7 @@ impl TmdbClient {
         }
 
         // Rate limit
-        self.rate_limiter.acquire().await;
+        let _permit = self.rate_limiter.acquire().await;
 
         // Use TMDB find endpoint with IMDb ID
         let url = format!("{}/find/{}", self.base_url, imdb_id);
