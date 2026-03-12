@@ -34,10 +34,3 @@ pub enum IndexEntry {
     Movie(FileInfo),
     Series(Vec<FileInfo>),
 }
-
-#[derive(Debug, Serialize)]
-pub struct IndexStats {
-    pub movies: usize,
-    pub series: usize,
-    pub episodes: usize,
-}

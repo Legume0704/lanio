@@ -1,7 +1,7 @@
 pub mod types;
 
 use dashmap::DashMap;
-use types::{FileInfo, IndexEntry, IndexStats};
+use types::{FileInfo, IndexEntry};
 
 pub struct MediaIndex {
     entries: DashMap<String, IndexEntry>,
@@ -146,28 +146,6 @@ impl MediaIndex {
         self.entries.clear();
     }
 
-    pub fn stats(&self) -> IndexStats {
-        let mut movies = 0;
-        let mut series = 0;
-        let mut episodes = 0;
-
-        for entry in self.entries.iter() {
-            match entry.value() {
-                IndexEntry::Movie(_) => movies += 1,
-                IndexEntry::Series(eps) => {
-                    series += 1;
-                    episodes += eps.len();
-                }
-            }
-        }
-
-        IndexStats {
-            movies,
-            series,
-            episodes,
-        }
-    }
-
     pub fn get_all_movies(&self) -> Vec<(String, FileInfo)> {
         self.entries
             .iter()
@@ -203,8 +181,8 @@ impl Default for MediaIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use types::{ContentType, ParsedMetadata};
     use std::path::PathBuf;
+    use types::{ContentType, ParsedMetadata};
 
     fn movie(imdb_id: &str, path: &str) -> types::FileInfo {
         types::FileInfo {
@@ -213,7 +191,10 @@ mod tests {
             year: None,
             content_type: ContentType::Movie,
             file_path: PathBuf::from(path),
-            parsed: ParsedMetadata { season: None, episode: None },
+            parsed: ParsedMetadata {
+                season: None,
+                episode: None,
+            },
             poster: None,
         }
     }
@@ -225,7 +206,10 @@ mod tests {
             year: None,
             content_type: ContentType::Series,
             file_path: PathBuf::from(path),
-            parsed: ParsedMetadata { season: Some(season), episode: Some(ep) },
+            parsed: ParsedMetadata {
+                season: Some(season),
+                episode: Some(ep),
+            },
             poster: None,
         }
     }
@@ -242,7 +226,10 @@ mod tests {
     #[test]
     fn insert_and_get_episode() {
         let index = MediaIndex::new();
-        index.insert_episode("tt0000002".to_string(), episode("tt0000002", "/s01e01.mkv", 1, 1));
+        index.insert_episode(
+            "tt0000002".to_string(),
+            episode("tt0000002", "/s01e01.mkv", 1, 1),
+        );
         let ep = index.get_episode("tt0000002", 1, 1).unwrap();
         assert_eq!(ep.parsed.season, Some(1));
         assert_eq!(ep.parsed.episode, Some(1));
@@ -252,8 +239,14 @@ mod tests {
     #[test]
     fn multiple_episodes_accumulate() {
         let index = MediaIndex::new();
-        index.insert_episode("tt0000003".to_string(), episode("tt0000003", "/s01e01.mkv", 1, 1));
-        index.insert_episode("tt0000003".to_string(), episode("tt0000003", "/s01e02.mkv", 1, 2));
+        index.insert_episode(
+            "tt0000003".to_string(),
+            episode("tt0000003", "/s01e01.mkv", 1, 1),
+        );
+        index.insert_episode(
+            "tt0000003".to_string(),
+            episode("tt0000003", "/s01e02.mkv", 1, 2),
+        );
         assert!(index.get_episode("tt0000003", 1, 1).is_some());
         assert!(index.get_episode("tt0000003", 1, 2).is_some());
     }
@@ -269,7 +262,10 @@ mod tests {
     #[test]
     fn remove_by_path_movie() {
         let index = MediaIndex::new();
-        index.insert_movie("tt0000005".to_string(), movie("tt0000005", "/media/movie.mkv"));
+        index.insert_movie(
+            "tt0000005".to_string(),
+            movie("tt0000005", "/media/movie.mkv"),
+        );
         index.remove_by_path(&PathBuf::from("/media/movie.mkv"));
         assert!(index.get("tt0000005").is_none());
     }
@@ -277,8 +273,14 @@ mod tests {
     #[test]
     fn remove_by_path_removes_only_matching_episode() {
         let index = MediaIndex::new();
-        index.insert_episode("tt0000006".to_string(), episode("tt0000006", "/show/s01e01.mkv", 1, 1));
-        index.insert_episode("tt0000006".to_string(), episode("tt0000006", "/show/s01e02.mkv", 1, 2));
+        index.insert_episode(
+            "tt0000006".to_string(),
+            episode("tt0000006", "/show/s01e01.mkv", 1, 1),
+        );
+        index.insert_episode(
+            "tt0000006".to_string(),
+            episode("tt0000006", "/show/s01e02.mkv", 1, 2),
+        );
         index.remove_by_path(&PathBuf::from("/show/s01e01.mkv"));
         assert!(index.get_episode("tt0000006", 1, 1).is_none());
         assert!(index.get_episode("tt0000006", 1, 2).is_some());
@@ -287,32 +289,16 @@ mod tests {
     #[test]
     fn remove_by_dir_removes_only_files_under_dir() {
         let index = MediaIndex::new();
-        index.insert_movie("tt0000007".to_string(), movie("tt0000007", "/media/movies/a.mkv"));
-        index.insert_movie("tt0000008".to_string(), movie("tt0000008", "/media/other/b.mkv"));
+        index.insert_movie(
+            "tt0000007".to_string(),
+            movie("tt0000007", "/media/movies/a.mkv"),
+        );
+        index.insert_movie(
+            "tt0000008".to_string(),
+            movie("tt0000008", "/media/other/b.mkv"),
+        );
         index.remove_by_dir(&PathBuf::from("/media/movies"));
         assert!(index.get("tt0000007").is_none());
         assert!(index.get("tt0000008").is_some());
-    }
-
-    #[test]
-    fn stats_counts_correctly() {
-        let index = MediaIndex::new();
-        index.insert_movie("tt0000009".to_string(), movie("tt0000009", "/a.mkv"));
-        index.insert_movie("tt0000010".to_string(), movie("tt0000010", "/b.mkv"));
-        index.insert_episode("tt0000011".to_string(), episode("tt0000011", "/s01e01.mkv", 1, 1));
-        index.insert_episode("tt0000011".to_string(), episode("tt0000011", "/s01e02.mkv", 1, 2));
-        let s = index.stats();
-        assert_eq!(s.movies, 2);
-        assert_eq!(s.series, 1);
-        assert_eq!(s.episodes, 2);
-    }
-
-    #[test]
-    fn clear_empties_index() {
-        let index = MediaIndex::new();
-        index.insert_movie("tt0000012".to_string(), movie("tt0000012", "/a.mkv"));
-        index.clear();
-        assert!(index.get("tt0000012").is_none());
-        assert_eq!(index.stats().movies, 0);
     }
 }
