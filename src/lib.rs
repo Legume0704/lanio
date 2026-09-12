@@ -34,6 +34,9 @@ pub async fn run(listener: Option<TcpListener>) -> anyhow::Result<()> {
     if let Some(ref public_url) = config.public_url {
         tracing::info!("Public URL: {}", public_url);
     }
+    if let Some(ref poster_url) = config.poster_url {
+        tracing::info!("Poster URL: {}", poster_url);
+    }
     if config.auth_token.is_some() {
         tracing::info!("Authentication: enabled (PASSWORD is set)");
     } else {
