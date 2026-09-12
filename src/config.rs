@@ -38,6 +38,11 @@ pub struct Config {
     /// Pre-computed auth token derived from PASSWORD. Not read from env — set in from_env().
     #[serde(skip)]
     pub auth_token: Option<String>,
+
+    /// Optional custom poster URL template. Supports `{imdb_id}` placeholder.
+    /// Example: https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg
+    #[serde(default)]
+    pub poster_url: Option<String>,
 }
 
 fn default_media_path() -> PathBuf {
@@ -72,6 +77,24 @@ impl Config {
             None => true,
         }
     }
+
+    /// Returns a poster URL for the given IMDb ID if `poster_url` is configured.
+    /// Replaces `{imdb_id}`, `{imdbId}`, or `{id}` placeholders with the provided IMDb ID.
+    pub fn poster_url_for(&self, imdb_id: &str) -> Option<String> {
+        self.poster_url.as_ref().and_then(|template| {
+            let trimmed = template.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(
+                    trimmed
+                        .replace("{imdb_id}", imdb_id)
+                        .replace("{imdbId}", imdb_id)
+                        .replace("{id}", imdb_id),
+                )
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -89,6 +112,7 @@ mod tests {
             tmdb_image_base_url: default_tmdb_image_base_url(),
             password: Some(password.to_string()),
             auth_token: Some(compute_token(password)),
+            poster_url: None,
         }
     }
 
@@ -103,6 +127,7 @@ mod tests {
             tmdb_image_base_url: default_tmdb_image_base_url(),
             password: None,
             auth_token: None,
+            poster_url: None,
         }
     }
 
@@ -140,5 +165,63 @@ mod tests {
             config.auth_token.as_deref(),
             Some(compute_token("mypass").as_str())
         );
+    }
+
+    #[test]
+    fn poster_url_for_none_when_unconfigured() {
+        let config = config_no_auth();
+        assert_eq!(config.poster_url_for("tt1234567"), None);
+    }
+
+    #[test]
+    fn poster_url_for_none_when_empty_or_whitespace() {
+        let mut config = config_no_auth();
+        config.poster_url = Some("".to_string());
+        assert_eq!(config.poster_url_for("tt1234567"), None);
+
+        config.poster_url = Some("   ".to_string());
+        assert_eq!(config.poster_url_for("tt1234567"), None);
+    }
+
+    #[test]
+    fn poster_url_for_replaces_imdb_id_placeholder() {
+        let mut config = config_no_auth();
+        config.poster_url =
+            Some("https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg".to_string());
+        assert_eq!(
+            config.poster_url_for("tt1234567"),
+            Some("https://btttr.cc/poster/imdb/poster-default/tt1234567.jpg".to_string())
+        );
+    }
+
+    #[test]
+    fn poster_url_for_supports_alternative_placeholders() {
+        let mut config = config_no_auth();
+        config.poster_url = Some("https://example.com/posters/{imdbId}.png".to_string());
+        assert_eq!(
+            config.poster_url_for("tt1234567"),
+            Some("https://example.com/posters/tt1234567.png".to_string())
+        );
+
+        config.poster_url = Some("https://example.com/posters/{id}.png".to_string());
+        assert_eq!(
+            config.poster_url_for("tt1234567"),
+            Some("https://example.com/posters/tt1234567.png".to_string())
+        );
+    }
+
+    #[test]
+    fn config_from_env_parses_poster_url() {
+        std::env::set_var("TMDB_API_KEY", "test_key");
+        std::env::set_var(
+            "POSTER_URL",
+            "https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg",
+        );
+        let config = Config::from_env().unwrap();
+        assert_eq!(
+            config.poster_url.as_deref(),
+            Some("https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg")
+        );
+        std::env::remove_var("POSTER_URL");
     }
 }

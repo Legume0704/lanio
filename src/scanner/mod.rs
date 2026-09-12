@@ -353,7 +353,10 @@ impl MediaScanner {
                 season: parsed.season,
                 episode: parsed.episode,
             },
-            poster: metadata.poster_url.clone(),
+            poster: self
+                .config
+                .poster_url_for(&metadata.imdb_id)
+                .or_else(|| metadata.poster_url.clone()),
         };
 
         // Add to index
@@ -389,6 +392,7 @@ mod tests {
             tmdb_image_base_url: "http://localhost".to_string(),
             password: None,
             auth_token: None,
+            poster_url: None,
         });
         MediaScanner::new(
             Arc::new(MediaIndex::new()),
