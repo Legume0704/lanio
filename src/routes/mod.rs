@@ -16,12 +16,12 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use std::collections::HashMap;
 use catalog::{catalog_handler, CatalogState};
 use health::health_handler;
 use home::home_handler;
 use manifest::get_manifest;
 use rescan::rescan_handler;
+use std::collections::HashMap;
 use std::sync::Arc;
 use stream::{stream_handler, StreamState};
 use tower_http::cors::CorsLayer;

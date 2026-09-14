@@ -15,9 +15,7 @@ pub struct RescanResponse {
     pub message: String,
 }
 
-pub async fn rescan_handler(
-    State(scanner): State<Arc<MediaScanner>>,
-) -> Response {
+pub async fn rescan_handler(State(scanner): State<Arc<MediaScanner>>) -> Response {
     if scanner.scanning.load(Ordering::SeqCst) {
         return (
             StatusCode::OK,

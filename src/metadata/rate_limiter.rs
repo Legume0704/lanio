@@ -56,13 +56,19 @@ mod tests {
 
         // Permit is still held — second acquire should block
         let blocked = tokio::time::timeout(Duration::from_millis(50), limiter.acquire()).await;
-        assert!(blocked.is_err(), "second acquire should block while first permit is held");
+        assert!(
+            blocked.is_err(),
+            "second acquire should block while first permit is held"
+        );
 
         drop(permit);
 
         // After release, next acquire should succeed immediately
         let succeeded = tokio::time::timeout(Duration::from_millis(50), limiter.acquire()).await;
-        assert!(succeeded.is_ok(), "acquire should succeed after permit is released");
+        assert!(
+            succeeded.is_ok(),
+            "acquire should succeed after permit is released"
+        );
     }
 
     #[tokio::test]
@@ -74,7 +80,10 @@ mod tests {
 
         // All 3 permits taken — 4th should block
         let blocked = tokio::time::timeout(Duration::from_millis(50), limiter.acquire()).await;
-        assert!(blocked.is_err(), "4th acquire should block when all permits are held");
+        assert!(
+            blocked.is_err(),
+            "4th acquire should block when all permits are held"
+        );
 
         drop(p1);
         drop(p2);
