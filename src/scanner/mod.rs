@@ -48,6 +48,35 @@ impl MediaScanner {
                 tracing::error!("File watcher failed: {}", e);
             }
         });
+
+        // Start cron scheduler if SCAN_CRON is configured
+        if let Some(ref cron_expr) = self.config.scan_cron {
+            match self.config.parsed_scan_cron() {
+                Ok(Some(schedule)) => {
+                    tracing::info!("Scheduled media scanner with cron: {}", cron_expr);
+                    let scanner = self.clone_for_task();
+                    tokio::spawn(async move {
+                        scanner.run_cron_scheduler(schedule).await;
+                    });
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::error!("Invalid SCAN_CRON '{}': {}", cron_expr, e);
+                }
+            }
+        }
+    }
+
+    async fn run_cron_scheduler(&self, schedule: cron::Schedule) {
+        for next in schedule.upcoming(chrono::Local) {
+            if let Ok(duration) = (next - chrono::Local::now()).to_std() {
+                tokio::time::sleep(duration).await;
+                tracing::info!("Running scheduled media library scan");
+                if let Err(e) = self.scan().await {
+                    tracing::error!("Scheduled scan failed: {}", e);
+                }
+            }
+        }
     }
 
     fn clone_for_task(&self) -> Self {
@@ -393,6 +422,7 @@ mod tests {
             password: None,
             auth_token: None,
             poster_url: None,
+            scan_cron: None,
         });
         MediaScanner::new(
             Arc::new(MediaIndex::new()),
@@ -431,5 +461,33 @@ mod tests {
         );
         // Clean up
         scanner.scanning.store(false, Ordering::SeqCst);
+    }
+
+    #[tokio::test]
+    async fn scanner_starts_with_scan_cron_configured() {
+        let config = Config {
+            media_path: std::path::PathBuf::from("/tmp/lanio_test_nonexistent"),
+            port: 8078,
+            base_url: None,
+            public_url: None,
+            tmdb_api_key: "fake".to_string(),
+            tmdb_base_url: "http://localhost".to_string(),
+            tmdb_image_base_url: "http://localhost".to_string(),
+            password: None,
+            auth_token: None,
+            poster_url: None,
+            scan_cron: Some("0 3 * * *".to_string()),
+        };
+        let scanner = MediaScanner::new(
+            Arc::new(MediaIndex::new()),
+            Arc::new(TmdbClient::new(
+                "fake".to_string(),
+                "http://localhost".to_string(),
+                "http://localhost".to_string(),
+            )),
+            Arc::new(config),
+        );
+        scanner.start().await;
+        assert!(!scanner.scanning.load(Ordering::SeqCst));
     }
 }
