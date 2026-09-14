@@ -21,6 +21,7 @@ pub struct MediaScanner {
     pub tmdb_client: Arc<TmdbClient>,
     pub config: Arc<Config>,
     pub scanning: Arc<AtomicBool>,
+    pub pending_rescan: Arc<AtomicBool>,
 }
 
 impl MediaScanner {
@@ -30,6 +31,7 @@ impl MediaScanner {
             tmdb_client,
             config,
             scanning: Arc::new(AtomicBool::new(false)),
+            pending_rescan: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -69,11 +71,19 @@ impl MediaScanner {
 
     async fn run_cron_scheduler(&self, schedule: cron::Schedule) {
         for next in schedule.upcoming(chrono::Local) {
-            if let Ok(duration) = (next - chrono::Local::now()).to_std() {
-                tokio::time::sleep(duration).await;
-                tracing::info!("Running scheduled media library scan");
-                if let Err(e) = self.scan().await {
-                    tracing::error!("Scheduled scan failed: {}", e);
+            match (next - chrono::Local::now()).to_std() {
+                Ok(duration) => {
+                    tokio::time::sleep(duration).await;
+                    tracing::info!("Running scheduled media library scan");
+                    if let Err(e) = self.scan().await {
+                        tracing::error!("Scheduled scan failed: {}", e);
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Scheduled scan for {} was already due; skipping missed tick",
+                        next
+                    );
                 }
             }
         }
@@ -85,6 +95,7 @@ impl MediaScanner {
             tmdb_client: Arc::clone(&self.tmdb_client),
             config: Arc::clone(&self.config),
             scanning: Arc::clone(&self.scanning),
+            pending_rescan: Arc::clone(&self.pending_rescan),
         }
     }
 
@@ -225,17 +236,26 @@ impl MediaScanner {
     }
 
     pub async fn scan(&self) -> anyhow::Result<()> {
-        if self
-            .scanning
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return Ok(());
-        }
+        loop {
+            if self
+                .scanning
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                self.pending_rescan.store(true, Ordering::SeqCst);
+                return Ok(());
+            }
 
-        let result = self.do_scan().await;
-        self.scanning.store(false, Ordering::SeqCst);
-        result
+            let result = self.do_scan().await;
+            self.scanning.store(false, Ordering::SeqCst);
+
+            if self.pending_rescan.swap(false, Ordering::SeqCst) {
+                tracing::info!("Queued rescan running after previous scan completed");
+                continue;
+            }
+
+            return result;
+        }
     }
 
     async fn do_scan(&self) -> anyhow::Result<()> {
@@ -452,15 +472,35 @@ mod tests {
         let scanner = make_scanner();
         // Simulate a scan already in progress
         scanner.scanning.store(true, Ordering::SeqCst);
-        // A second call should return Ok immediately without touching the flag
+        // A second call should return Ok immediately and queue a follow-up scan
         let result = scanner.scan().await;
         assert!(result.is_ok());
         assert!(
             scanner.scanning.load(Ordering::SeqCst),
             "flag should remain true — only the original caller should reset it"
         );
+        assert!(
+            scanner.pending_rescan.load(Ordering::SeqCst),
+            "request while scanning should be queued"
+        );
         // Clean up
         scanner.scanning.store(false, Ordering::SeqCst);
+        scanner.pending_rescan.store(false, Ordering::SeqCst);
+    }
+
+    #[tokio::test]
+    async fn queued_rescan_consumed_and_scan_completes() {
+        let scanner = make_scanner();
+        // Simulate a queued rescan from a request that arrived mid-scan
+        scanner.pending_rescan.store(true, Ordering::SeqCst);
+
+        let result = scanner.scan().await;
+        assert!(result.is_ok());
+        assert!(
+            !scanner.pending_rescan.load(Ordering::SeqCst),
+            "pending rescan should be consumed after the scan completes"
+        );
+        assert!(!scanner.scanning.load(Ordering::SeqCst));
     }
 
     #[tokio::test]

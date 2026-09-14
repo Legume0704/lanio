@@ -6,7 +6,6 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -16,17 +15,6 @@ pub struct RescanResponse {
 }
 
 pub async fn rescan_handler(State(scanner): State<Arc<MediaScanner>>) -> Response {
-    if scanner.scanning.load(Ordering::SeqCst) {
-        return (
-            StatusCode::OK,
-            Json(RescanResponse {
-                status: "already_scanning".to_string(),
-                message: "Media library scan is already in progress".to_string(),
-            }),
-        )
-            .into_response();
-    }
-
     let scanner_clone = Arc::clone(&scanner);
     tokio::spawn(async move {
         if let Err(e) = scanner_clone.scan().await {
@@ -38,7 +26,7 @@ pub async fn rescan_handler(State(scanner): State<Arc<MediaScanner>>) -> Respons
         StatusCode::ACCEPTED,
         Json(RescanResponse {
             status: "ok".to_string(),
-            message: "Media library scan initiated".to_string(),
+            message: "Media library rescan requested".to_string(),
         }),
     )
         .into_response()
@@ -51,6 +39,7 @@ mod tests {
     use crate::index::MediaIndex;
     use crate::metadata::TmdbClient;
     use std::path::PathBuf;
+    use std::sync::atomic::Ordering;
 
     fn make_test_scanner() -> Arc<MediaScanner> {
         let config = Arc::new(Config {
@@ -86,11 +75,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rescan_returns_200_when_already_scanning() {
+    async fn rescan_returns_202_when_already_scanning() {
         let scanner = make_test_scanner();
         scanner.scanning.store(true, Ordering::SeqCst);
 
-        let res = rescan_handler(State(scanner)).await;
-        assert_eq!(res.status(), StatusCode::OK);
+        let res = rescan_handler(State(scanner.clone())).await;
+        assert_eq!(res.status(), StatusCode::ACCEPTED);
+        scanner.scanning.store(false, Ordering::SeqCst);
+        scanner.pending_rescan.store(false, Ordering::SeqCst);
     }
 }
