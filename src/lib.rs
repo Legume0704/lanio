@@ -37,6 +37,9 @@ pub async fn run(listener: Option<TcpListener>) -> anyhow::Result<()> {
     if let Some(ref poster_url) = config.poster_url {
         tracing::info!("Poster URL: {}", poster_url);
     }
+    if let Some(ref scan_cron) = config.scan_cron {
+        tracing::info!("Scheduled rescan: {}", scan_cron);
+    }
     if config.auth_token.is_some() {
         tracing::info!("Authentication: enabled (PASSWORD is set)");
     } else {

@@ -34,12 +34,12 @@ fn manifest_data() -> Manifest {
         catalogs: vec![
             Catalog {
                 id: "lanio-movies".to_string(),
-                name: "Lanio".to_string(),
+                name: "Movies on Local Network".to_string(),
                 r#type: "movie".to_string(),
             },
             Catalog {
                 id: "lanio-series".to_string(),
-                name: "Lanio".to_string(),
+                name: "Series on Local Network".to_string(),
                 r#type: "series".to_string(),
             },
         ],

@@ -43,6 +43,11 @@ pub struct Config {
     /// Example: https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg
     #[serde(default)]
     pub poster_url: Option<String>,
+
+    /// Optional cron schedule for periodic media library scans.
+    /// Supports standard 5-part ("0 3 * * *"), 6-part, or 7-part cron expressions.
+    #[serde(default)]
+    pub scan_cron: Option<String>,
 }
 
 fn default_media_path() -> PathBuf {
@@ -66,6 +71,14 @@ impl Config {
         let mut config: Config = envy::from_env()
             .map_err(|e| anyhow::anyhow!("Failed to load config from environment: {}", e))?;
         config.auth_token = config.password.as_ref().map(|p| compute_token(p));
+        config.scan_cron = config.scan_cron.and_then(|s| {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
         Ok(config)
     }
 
@@ -95,6 +108,25 @@ impl Config {
             }
         })
     }
+
+    /// Returns the parsed cron schedule if `scan_cron` is configured and valid.
+    pub fn parsed_scan_cron(&self) -> anyhow::Result<Option<cron::Schedule>> {
+        use std::str::FromStr;
+
+        self.scan_cron
+            .as_deref()
+            .map(|expr| {
+                // If 5 fields (standard Unix cron without seconds), prepend "0 " for seconds
+                let s = if expr.split_whitespace().count() == 5 {
+                    format!("0 {expr}")
+                } else {
+                    expr.to_string()
+                };
+                cron::Schedule::from_str(&s)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse SCAN_CRON '{}': {}", expr, e))
+            })
+            .transpose()
+    }
 }
 
 #[cfg(test)]
@@ -113,6 +145,7 @@ mod tests {
             password: Some(password.to_string()),
             auth_token: Some(compute_token(password)),
             poster_url: None,
+            scan_cron: None,
         }
     }
 
@@ -128,6 +161,7 @@ mod tests {
             password: None,
             auth_token: None,
             poster_url: None,
+            scan_cron: None,
         }
     }
 
@@ -223,5 +257,39 @@ mod tests {
             Some("https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg")
         );
         std::env::remove_var("POSTER_URL");
+    }
+
+    #[test]
+    fn parsed_scan_cron_supports_5_and_6_fields() {
+        let mut config = config_no_auth();
+        config.scan_cron = Some("0 3 * * *".to_string());
+        assert!(config.parsed_scan_cron().unwrap().is_some());
+
+        config.scan_cron = Some("0 0 3 * * *".to_string());
+        assert!(config.parsed_scan_cron().unwrap().is_some());
+    }
+
+    #[test]
+    fn parsed_scan_cron_rejects_invalid_expressions() {
+        let mut config = config_no_auth();
+        config.scan_cron = Some("invalid cron".to_string());
+        assert!(config.parsed_scan_cron().is_err());
+    }
+
+    #[test]
+    fn config_from_env_parses_scan_cron() {
+        std::env::set_var("TMDB_API_KEY", "test_key");
+
+        std::env::set_var("SCAN_CRON", "0 3 * * *");
+        let config = Config::from_env().unwrap();
+        assert_eq!(config.scan_cron.as_deref(), Some("0 3 * * *"));
+        assert!(config.parsed_scan_cron().unwrap().is_some());
+
+        std::env::set_var("SCAN_CRON", "   ");
+        let config_empty = Config::from_env().unwrap();
+        assert_eq!(config_empty.scan_cron, None);
+        assert!(config_empty.parsed_scan_cron().unwrap().is_none());
+
+        std::env::remove_var("SCAN_CRON");
     }
 }

@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod health;
 pub mod home;
 pub mod manifest;
+pub mod rescan;
 pub mod stream;
 
 use crate::config::Config;
@@ -12,14 +13,15 @@ use axum::{
     http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Router,
 };
-use std::collections::HashMap;
 use catalog::{catalog_handler, CatalogState};
 use health::health_handler;
 use home::home_handler;
 use manifest::get_manifest;
+use rescan::rescan_handler;
+use std::collections::HashMap;
 use std::sync::Arc;
 use stream::{stream_handler, StreamState};
 use tower_http::cors::CorsLayer;
@@ -57,7 +59,9 @@ fn build_stremio_subrouter(scanner: &Arc<MediaScanner>, config: &Arc<Config>) ->
         .route("/catalog/:type/:id", get(catalog_handler))
         .with_state(catalog_state)
         .route("/video", get(video_handler))
-        .with_state(streamer_state);
+        .with_state(streamer_state)
+        .route("/rescan", post(rescan_handler))
+        .with_state(Arc::clone(scanner));
 
     if config.auth_token.is_some() {
         Router::new().nest(

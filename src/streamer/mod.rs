@@ -18,9 +18,9 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
 fn validate_path(file_path: &FsPath, media_path: &FsPath) -> Result<PathBuf> {
-    let resolved = file_path.canonicalize().map_err(|e| {
-        AppError::InvalidPath(format!("Cannot resolve path: {}", e))
-    })?;
+    let resolved = file_path
+        .canonicalize()
+        .map_err(|e| AppError::InvalidPath(format!("Cannot resolve path: {}", e)))?;
 
     let resolved_media = media_path
         .canonicalize()

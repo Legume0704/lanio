@@ -39,6 +39,13 @@ pub async fn home_handler(State(config): State<Arc<Config>>) -> Html<String> {
             urlencoding::encode(&manifest_url)
         );
 
-        Html(MainPage { manifest_url, install_url }.render().unwrap())
+        Html(
+            MainPage {
+                manifest_url,
+                install_url,
+            }
+            .render()
+            .unwrap(),
+        )
     }
 }

@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+- Add optional `SCAN_CRON` config to run a full media library rescan on a schedule
+  - Supports standard 5-field cron plus 6- and 7-field forms with seconds
+- Add `POST /rescan` endpoint for Sonarr/Radarr webhooks
+  - Requests arriving while a scan is in progress are queued and run when the current scan finishes
+- Refactor automated integration tests into a shared helper module with focused per-feature suites
+
 ## [0.3.0]
 
 - Add optional config override for poster URL

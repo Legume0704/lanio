@@ -35,10 +35,13 @@ pub fn parse_filename(filename: &str) -> ParsedFilename {
 
     // Extract year and its position
     let year_match = YEAR_REGEX.find(&working);
-    let year = year_match.as_ref().and_then(|m| m.as_str().parse::<u16>().ok());
+    let year = year_match
+        .as_ref()
+        .and_then(|m| m.as_str().parse::<u16>().ok());
 
     // Extract season/episode and its position
-    let se_match = SEASON_EPISODE_REGEX.find(&working)
+    let se_match = SEASON_EPISODE_REGEX
+        .find(&working)
         .or_else(|| ALTERNATE_SE_REGEX.find(&working));
 
     let (season, episode) = if let Some(caps) = SEASON_EPISODE_REGEX.captures(&working) {

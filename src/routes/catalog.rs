@@ -35,13 +35,20 @@ pub struct CatalogPath {
 }
 
 pub async fn catalog_handler(
-    Path(CatalogPath { content_type, id: catalog_id }): Path<CatalogPath>,
+    Path(CatalogPath {
+        content_type,
+        id: catalog_id,
+    }): Path<CatalogPath>,
     State(state): State<CatalogState>,
 ) -> Json<CatalogResponse> {
     Json(catalog_inner(content_type, catalog_id, &state))
 }
 
-fn catalog_inner(content_type: String, catalog_id: String, state: &CatalogState) -> CatalogResponse {
+fn catalog_inner(
+    content_type: String,
+    catalog_id: String,
+    state: &CatalogState,
+) -> CatalogResponse {
     // Strip .json extension if present
     let catalog_id = catalog_id.strip_suffix(".json").unwrap_or(&catalog_id);
 
@@ -118,6 +125,7 @@ mod tests {
             password: None,
             auth_token: None,
             poster_url,
+            scan_cron: None,
         });
 
         let index = Arc::new(MediaIndex::new());
@@ -150,11 +158,7 @@ mod tests {
             },
         );
 
-        let res = catalog_inner(
-            "movie".to_string(),
-            "lanio-movies".to_string(),
-            &state,
-        );
+        let res = catalog_inner("movie".to_string(), "lanio-movies".to_string(), &state);
         assert_eq!(res.metas.len(), 1);
         assert_eq!(
             res.metas[0].poster.as_deref(),
@@ -183,11 +187,7 @@ mod tests {
             },
         );
 
-        let res = catalog_inner(
-            "movie".to_string(),
-            "lanio-movies".to_string(),
-            &state,
-        );
+        let res = catalog_inner("movie".to_string(), "lanio-movies".to_string(), &state);
         assert_eq!(res.metas.len(), 1);
         assert_eq!(
             res.metas[0].poster.as_deref(),
@@ -216,11 +216,7 @@ mod tests {
             },
         );
 
-        let res = catalog_inner(
-            "series".to_string(),
-            "lanio-series".to_string(),
-            &state,
-        );
+        let res = catalog_inner("series".to_string(), "lanio-series".to_string(), &state);
         assert_eq!(res.metas.len(), 1);
         assert_eq!(
             res.metas[0].poster.as_deref(),
