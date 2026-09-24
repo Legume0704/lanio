@@ -87,18 +87,11 @@ impl TmdbClient {
 
         let details: TmdbMovieDetails = response.json().await.ok()?;
 
-        let imdb_id = details.imdb_id?;
-        let poster_url = details
-            .poster_path
-            .map(|path| format!("{}{}", self.image_base_url, path));
+        let imdb_id = details.imdb_id.clone()?;
+        let metadata =
+            self.movie_metadata(imdb_id, &details, search_response.results[0].title.clone());
 
-        tracing::info!("Found IMDb ID for {}: {}", title, imdb_id);
-
-        let metadata = MediaMetadata {
-            imdb_id,
-            title: details.title.or(search_response.results[0].title.clone()),
-            poster_url,
-        };
+        tracing::info!("Found IMDb ID for {}: {}", title, metadata.imdb_id);
 
         // Cache the result
         self.cache.insert(cache_key, metadata.clone()).await;
@@ -173,17 +166,10 @@ impl TmdbClient {
 
         let details: TmdbTvDetails = details_response.json().await.ok()?;
 
-        let poster_url = details
-            .poster_path
-            .map(|path| format!("{}{}", self.image_base_url, path));
+        let metadata =
+            self.tv_metadata(imdb_id, &details, search_response.results[0].title.clone());
 
-        tracing::info!("Found IMDb ID for {}: {}", title, imdb_id);
-
-        let metadata = MediaMetadata {
-            imdb_id,
-            title: details.name.or(search_response.results[0].title.clone()),
-            poster_url,
-        };
+        tracing::info!("Found IMDb ID for {}: {}", title, metadata.imdb_id);
 
         // Cache the result
         self.cache.insert(cache_key, metadata.clone()).await;
@@ -223,31 +209,87 @@ impl TmdbClient {
         let find_response: TmdbFindResponse = response.json().await.ok()?;
 
         // Check movie results first, then TV results
-        let (poster_path, title) = if !find_response.movie_results.is_empty() {
-            (
-                find_response.movie_results[0].poster_path.clone(),
-                find_response.movie_results[0].title.clone(),
-            )
+        let metadata = if !find_response.movie_results.is_empty() {
+            let result = &find_response.movie_results[0];
+            MediaMetadata {
+                imdb_id: imdb_id.to_string(),
+                title: result.title.clone(),
+                year: parse_year(&result.release_date),
+                overview: result.overview.clone(),
+                poster_url: result
+                    .poster_path
+                    .clone()
+                    .map(|path| format!("{}{}", self.image_base_url, path)),
+                tmdb_rating: result.vote_average,
+                tmdb_votes: result.vote_count,
+            }
         } else if !find_response.tv_results.is_empty() {
-            (
-                find_response.tv_results[0].poster_path.clone(),
-                find_response.tv_results[0].title.clone(),
-            )
+            let result = &find_response.tv_results[0];
+            MediaMetadata {
+                imdb_id: imdb_id.to_string(),
+                title: result.title.clone(),
+                year: parse_year(&result.first_air_date),
+                overview: result.overview.clone(),
+                poster_url: result
+                    .poster_path
+                    .clone()
+                    .map(|path| format!("{}{}", self.image_base_url, path)),
+                tmdb_rating: result.vote_average,
+                tmdb_votes: result.vote_count,
+            }
         } else {
             tracing::warn!("No TMDB results for IMDb ID: {}", imdb_id);
-            (None, None)
+            return None;
         };
 
-        let poster_url = poster_path.map(|path| format!("{}{}", self.image_base_url, path));
-
-        let metadata = MediaMetadata {
-            imdb_id: imdb_id.to_string(),
-            title,
-            poster_url,
-        };
+        tracing::info!("Found metadata for IMDb ID: {}", imdb_id);
 
         // Cache the result
         self.cache.insert(cache_key, metadata.clone()).await;
         Some(metadata)
     }
+
+    fn movie_metadata(
+        &self,
+        imdb_id: String,
+        details: &TmdbMovieDetails,
+        fallback_title: Option<String>,
+    ) -> MediaMetadata {
+        MediaMetadata {
+            imdb_id,
+            title: details.title.clone().or(fallback_title),
+            year: parse_year(&details.release_date),
+            overview: details.overview.clone(),
+            poster_url: details
+                .poster_path
+                .clone()
+                .map(|path| format!("{}{}", self.image_base_url, path)),
+            tmdb_rating: details.vote_average,
+            tmdb_votes: details.vote_count,
+        }
+    }
+
+    fn tv_metadata(
+        &self,
+        imdb_id: String,
+        details: &TmdbTvDetails,
+        fallback_title: Option<String>,
+    ) -> MediaMetadata {
+        MediaMetadata {
+            imdb_id,
+            title: details.name.clone().or(fallback_title),
+            year: parse_year(&details.first_air_date),
+            overview: details.overview.clone(),
+            poster_url: details
+                .poster_path
+                .clone()
+                .map(|path| format!("{}{}", self.image_base_url, path)),
+            tmdb_rating: details.vote_average,
+            tmdb_votes: details.vote_count,
+        }
+    }
+}
+
+fn parse_year(date: &Option<String>) -> Option<u16> {
+    date.as_deref()?.get(..4)?.parse().ok()
 }
