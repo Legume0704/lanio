@@ -387,6 +387,10 @@ impl MediaScanner {
             return Ok(false);
         };
 
+        if let Some(tmdb_title) = &metadata.title {
+            title = tmdb_title.clone();
+        }
+
         // Create FileInfo
         let file_info = FileInfo {
             imdb_id: metadata.imdb_id.clone(),

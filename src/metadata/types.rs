@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone)]
 pub struct MediaMetadata {
     pub imdb_id: String,
+    pub title: Option<String>,
     pub poster_url: Option<String>,
 }
 
@@ -14,17 +15,22 @@ pub struct TmdbSearchResponse {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TmdbSearchResult {
     pub id: u64,
+    #[serde(alias = "name")]
+    pub title: Option<String>,
     pub poster_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TmdbMovieDetails {
     pub imdb_id: Option<String>,
+    pub title: Option<String>,
     pub poster_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TmdbTvDetails {
+    #[serde(alias = "title")]
+    pub name: Option<String>,
     pub poster_path: Option<String>,
 }
 
@@ -41,5 +47,7 @@ pub struct TmdbFindResponse {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TmdbFindResult {
+    #[serde(alias = "name")]
+    pub title: Option<String>,
     pub poster_path: Option<String>,
 }

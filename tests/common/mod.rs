@@ -47,18 +47,29 @@ pub fn mock_movie(
     imdb_id: &str,
     details_delay: Option<Duration>,
 ) {
+    mock_movie_named(server, query, query, id, imdb_id, details_delay);
+}
+
+pub fn mock_movie_named(
+    server: &MockServer,
+    query: &str,
+    tmdb_title: &str,
+    id: u32,
+    imdb_id: &str,
+    details_delay: Option<Duration>,
+) {
     server.mock(|when, then| {
         when.method(GET)
             .path("/search/movie")
             .query_param("query", query);
         then.status(200)
-            .json_body(json!({ "results": [{ "id": id }] }));
+            .json_body(json!({ "results": [{ "id": id, "title": tmdb_title }] }));
     });
     server.mock(|when, then| {
         when.method(GET).path(format!("/movie/{}", id));
-        let then = then
+        let then = then.origin(json!({ "imdb_id": imdb_id, "title": tmdb_title, "poster_path": "/poster.jpg" }))
             .status(200)
-            .json_body(json!({ "imdb_id": imdb_id, "poster_path": "/poster.jpg" }));
+            .json_body(json!({ "imdb_id": imdb_id, "title": tmdb_title, "poster_path": "/poster.jpg" }));
         match details_delay {
             Some(delay) => then.delay(delay),
             None => then,

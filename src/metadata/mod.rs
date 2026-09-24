@@ -96,6 +96,7 @@ impl TmdbClient {
 
         let metadata = MediaMetadata {
             imdb_id,
+            title: details.title.or(search_response.results[0].title.clone()),
             poster_url,
         };
 
@@ -180,6 +181,7 @@ impl TmdbClient {
 
         let metadata = MediaMetadata {
             imdb_id,
+            title: details.name.or(search_response.results[0].title.clone()),
             poster_url,
         };
 
@@ -221,19 +223,26 @@ impl TmdbClient {
         let find_response: TmdbFindResponse = response.json().await.ok()?;
 
         // Check movie results first, then TV results
-        let poster_path = if !find_response.movie_results.is_empty() {
-            find_response.movie_results[0].poster_path.clone()
+        let (poster_path, title) = if !find_response.movie_results.is_empty() {
+            (
+                find_response.movie_results[0].poster_path.clone(),
+                find_response.movie_results[0].title.clone(),
+            )
         } else if !find_response.tv_results.is_empty() {
-            find_response.tv_results[0].poster_path.clone()
+            (
+                find_response.tv_results[0].poster_path.clone(),
+                find_response.tv_results[0].title.clone(),
+            )
         } else {
             tracing::warn!("No TMDB results for IMDb ID: {}", imdb_id);
-            None
+            (None, None)
         };
 
         let poster_url = poster_path.map(|path| format!("{}{}", self.image_base_url, path));
 
         let metadata = MediaMetadata {
             imdb_id: imdb_id.to_string(),
+            title,
             poster_url,
         };
 
