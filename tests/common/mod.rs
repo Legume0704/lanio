@@ -47,21 +47,42 @@ pub fn mock_movie(
     imdb_id: &str,
     details_delay: Option<Duration>,
 ) {
+    mock_movie_named(server, query, query, id, imdb_id, details_delay);
+}
+
+pub fn mock_movie_named(
+    server: &MockServer,
+    query: &str,
+    tmdb_title: &str,
+    id: u32,
+    imdb_id: &str,
+    details_delay: Option<Duration>,
+) {
+    let details_body = json!({
+        "id": id,
+        "imdb_id": imdb_id,
+        "title": tmdb_title,
+        "overview": "A thrilling test overview.",
+        "release_date": "2008-01-01",
+        "poster_path": "/poster.jpg",
+        "vote_average": 8.1,
+        "vote_count": 1200
+    });
     server.mock(|when, then| {
         when.method(GET)
             .path("/search/movie")
             .query_param("query", query);
         then.status(200)
-            .json_body(json!({ "results": [{ "id": id }] }));
+            .json_body(json!({ "results": [details_body] }));
     });
     server.mock(|when, then| {
         when.method(GET).path(format!("/movie/{}", id));
-        let then = then
-            .status(200)
-            .json_body(json!({ "imdb_id": imdb_id, "poster_path": "/poster.jpg" }));
         match details_delay {
-            Some(delay) => then.delay(delay),
-            None => then,
+            Some(delay) => then
+                .status(200)
+                .json_body(details_body.clone())
+                .delay(delay),
+            None => then.status(200).json_body(details_body),
         };
     });
 }

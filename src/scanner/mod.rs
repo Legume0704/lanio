@@ -387,6 +387,13 @@ impl MediaScanner {
             return Ok(false);
         };
 
+        if let Some(tmdb_title) = &metadata.title {
+            title = tmdb_title.clone();
+        }
+        if metadata.year.is_some() {
+            year = metadata.year;
+        }
+
         // Create FileInfo
         let file_info = FileInfo {
             imdb_id: metadata.imdb_id.clone(),
@@ -406,6 +413,9 @@ impl MediaScanner {
                 .config
                 .poster_url_for(&metadata.imdb_id)
                 .or_else(|| metadata.poster_url.clone()),
+            description: metadata.overview.clone(),
+            tmdb_rating: metadata.tmdb_rating,
+            tmdb_votes: metadata.tmdb_votes,
         };
 
         // Add to index

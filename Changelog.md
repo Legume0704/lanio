@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0]
+
+- Catalog entries now use the TMDB title for the display name (falling back to the parsed filename)
+- Add richer metadata to catalog entries from the existing TMDB lookups (no extra requests):
+  - `releaseInfo` (release year) and `description` (overview)
+  - `appExtras.ratings.tmdb` with TMDB rating and vote count
+  - `posterShape: "poster"` on each entry
+- Bump Rust MSRV-compatible TMDB metadata so file years no longer affect release year when TMDB data is present
+
 ## [0.4.0]
 
 - Add optional `SCAN_CRON` config to run a full media library rescan on a schedule

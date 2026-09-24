@@ -195,7 +195,7 @@ mod tests {
                 season: None,
                 episode: None,
             },
-            poster: None,
+            ..Default::default()
         }
     }
 
@@ -210,7 +210,7 @@ mod tests {
                 season: Some(season),
                 episode: Some(ep),
             },
-            poster: None,
+            ..Default::default()
         }
     }
 
