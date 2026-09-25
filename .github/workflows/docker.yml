@@ -3,6 +3,13 @@ name: Build and Push Docker Image
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: Image tag to publish for the manual test
+        required: true
+        default: test
+        type: string
 
 jobs:
   tag:
@@ -14,13 +21,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get version
+      - name: Get image tag
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.image-tag }}
         run: |
-          version=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
-          echo "tag=v$version" >> $GITHUB_OUTPUT
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ ! "$INPUT_TAG" =~ ^[a-z0-9_][a-z0-9_.-]{0,127}$ ]]; then
+              echo "Invalid image tag: $INPUT_TAG" >&2
+              exit 1
+            fi
+            tag="$INPUT_TAG"
+          else
+            version=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+            tag="v$version"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Create tag
+        if: github.event_name == 'push'
         run: |
           tag="${{ steps.version.outputs.tag }}"
           if git ls-remote --tags origin "$tag" | grep -q "$tag"; then
@@ -134,7 +154,7 @@ jobs:
           images: ${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ needs.tag.outputs.tag }}
-            type=raw,value=latest
+            ${{ github.event_name == 'push' && 'type=raw,value=latest' || '' }}
 
       - name: Create and push multi-arch manifest
         working-directory: /tmp/digests
