@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5]
+
+- Update GitHub Actions used by the CI and Docker build workflows:
+  - `actions/checkout` 4.4.0 -> 7.0.1
+  - `actions/upload-artifact` 4.6.2 -> 7.0.1
+  - `docker/build-push-action` 6.19.2 -> 7.4.0
+  - `docker/setup-buildx-action` 3.12.0 -> 4.4.1
+  - `docker/setup-qemu-action` 3.7.0 -> 4.4.0
+
 ## [0.5.4]
 
 - Update GitHub Actions used by the Docker build workflow:
