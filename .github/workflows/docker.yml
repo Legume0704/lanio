@@ -120,8 +120,10 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
-          cache-from: type=gha,scope=${{ matrix.slug }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.slug }},ignore-error=true
+          cache-from: |
+            type=gha,scope=${{ matrix.slug }}
+            type=registry,ref=${{ env.IMAGE_NAME }}:buildcache-${{ matrix.slug }}
+          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache-${{ matrix.slug }},mode=max,compression=zstd,ignore-error=true
 
       - name: Export digest
         run: |
