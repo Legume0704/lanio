@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4]
+
+- Update GitHub Actions used by the Docker build workflow:
+  - `actions/cache` 4.3.0 -> 6.1.0
+  - `actions/download-artifact` 4.3.0 -> 8.0.1
+  - `docker/login-action` 3.7.0 -> 4.6.0
+  - `docker/metadata-action` 5.10.0 -> 6.2.0
+  - `reproducible-containers/buildkit-cache-dance` 3.3.2 -> 3.4.0
+
 ## [0.5.3]
 
 - Speed up Docker image builds with persistent BuildKit and Cargo build caches
