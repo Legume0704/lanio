@@ -1,0 +1,12 @@
+.git/
+.github/
+.claude/
+.local/
+.env
+.env.*
+target/
+tests/
+examples/
+*.md
+*.log
+.DS_Store
