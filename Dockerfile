@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 # Build stage
 FROM rust:1.93-slim AS builder
 
@@ -13,11 +15,17 @@ WORKDIR /build
 # Copy manifest files
 COPY Cargo.toml Cargo.lock askama.toml ./
 
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    cargo fetch --locked
+
 # Copy source code
 COPY src ./src
 
 # Build release binary
-RUN cargo build --release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/build/target,sharing=locked \
+    cargo build --release --locked && \
+    cp /build/target/release/lanio /build/lanio
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -30,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the Rust binary from builder
-COPY --from=builder /build/target/release/lanio /usr/local/bin/
+COPY --from=builder /build/lanio /usr/local/bin/
 
 EXPOSE 8078
 

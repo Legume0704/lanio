@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3]
+
+- Speed up Docker image builds with persistent BuildKit and Cargo build caches
+- Pin GitHub Actions to commit SHAs and add weekly Dependabot updates
+
 ## [0.5.2]
 
 - Add manual workflow dispatch for test Docker image builds
