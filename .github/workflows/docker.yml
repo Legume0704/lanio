@@ -44,14 +44,25 @@ jobs:
         include:
           - platform: linux/amd64
             runner: ubuntu-latest
+            slug: amd64
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
+            slug: arm64
+          - platform: linux/arm/v7
+            runner: ubuntu-latest
+            slug: armv7
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Set image name
         run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+      - name: Set up QEMU
+        if: matrix.platform == 'linux/arm/v7'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -71,8 +82,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
-          cache-from: type=gha,scope=${{ matrix.platform }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+          cache-from: type=gha,scope=${{ matrix.slug }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.slug }}
 
       - name: Export digest
         run: |
@@ -83,7 +94,7 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          name: digests-${{ matrix.slug }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
