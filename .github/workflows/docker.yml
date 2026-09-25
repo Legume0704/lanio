@@ -3,6 +3,13 @@ name: Build and Push Docker Image
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: Image tag to publish for the manual test
+        required: true
+        default: test
+        type: string
 
 jobs:
   tag:
@@ -14,23 +21,36 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - name: Get version
+      - name: Get image tag
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.image-tag }}
         run: |
-          version=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
-          echo "tag=v$version" >> $GITHUB_OUTPUT
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ ! "$INPUT_TAG" =~ ^[a-z0-9_][a-z0-9_.-]{0,127}$ ]]; then
+              echo "Invalid image tag: $INPUT_TAG" >&2
+              exit 1
+            fi
+            tag="$INPUT_TAG"
+          else
+            version=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+            tag="v$version"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Create tag
+        if: github.event_name == 'push'
         run: |
           tag="${{ steps.version.outputs.tag }}"
           if git ls-remote --tags origin "$tag" | grep -q "$tag"; then
             echo "Tag $tag already exists, skipping."
-          # else
-          #   git config user.name "github-actions[bot]"
-          #   git config user.email "github-actions[bot]@users.noreply.github.com"
-          #   git tag "$tag"
-          #   git push origin "$tag"
-          #   echo "Created tag $tag"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "$tag"
+            git push origin "$tag"
+            echo "Created tag $tag"
           fi
 
   build:
@@ -152,11 +172,11 @@ jobs:
           images: ${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ needs.tag.outputs.tag }}
-            type=raw,value=latest
+            ${{ github.event_name == 'push' && 'type=raw,value=latest' || '' }}
 
-      # - name: Create and push multi-arch manifest
-      #   working-directory: /tmp/digests
-      #   run: |
-      #     docker buildx imagetools create \
-      #       $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-      #       $(printf "${IMAGE_NAME}@sha256:%s " *)
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE_NAME}@sha256:%s " *)
