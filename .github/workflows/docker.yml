@@ -25,12 +25,12 @@ jobs:
           tag="${{ steps.version.outputs.tag }}"
           if git ls-remote --tags origin "$tag" | grep -q "$tag"; then
             echo "Tag $tag already exists, skipping."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag "$tag"
-            git push origin "$tag"
-            echo "Created tag $tag"
+          # else
+          #   git config user.name "github-actions[bot]"
+          #   git config user.email "github-actions[bot]@users.noreply.github.com"
+          #   git tag "$tag"
+          #   git push origin "$tag"
+          #   echo "Created tag $tag"
           fi
 
   build:
@@ -154,9 +154,9 @@ jobs:
             type=raw,value=${{ needs.tag.outputs.tag }}
             type=raw,value=latest
 
-      - name: Create and push multi-arch manifest
-        working-directory: /tmp/digests
-        run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf "${IMAGE_NAME}@sha256:%s " *)
+      # - name: Create and push multi-arch manifest
+      #   working-directory: /tmp/digests
+      #   run: |
+      #     docker buildx imagetools create \
+      #       $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+      #       $(printf "${IMAGE_NAME}@sha256:%s " *)
