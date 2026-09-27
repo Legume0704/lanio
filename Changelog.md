@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix movies with a numeric title (`2012`, `1917`) never being indexed
 - Honour an IMDb ID in the filename when the title cannot be parsed, and strip it from the parsed title
 - Select TMDB search results by release year instead of the top-ranked hit, so remakes and newer entries no longer shadow the copy on disk
+  - The year is now also read from a series folder name (`Show Name (2005)`) when the episode filename doesn't carry one
 
 ## [0.5.5]
 

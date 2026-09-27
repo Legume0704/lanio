@@ -344,15 +344,19 @@ impl MediaScanner {
                         imdb_id = extract_imdb_id(parent_name);
                     }
 
+                    let parent_parsed = parse_filename(parent_name);
+
                     // Use parent directory as series title if filename didn't have one
-                    if title.is_empty() {
-                        let parent_parsed = parse_filename(parent_name);
-                        if !parent_parsed.title.is_empty() {
-                            title = parent_parsed.title;
-                            if year.is_none() {
-                                year = parent_parsed.year;
-                            }
-                        }
+                    if title.is_empty() && !parent_parsed.title.is_empty() {
+                        title = parent_parsed.title.clone();
+                    }
+
+                    // The year is a separate fallback: it usually lives only in
+                    // the folder name ("Show Name (2005)"), even when the title
+                    // came from the episode filename. Without it a remake or a
+                    // newer series of the same name wins the TMDB search.
+                    if year.is_none() {
+                        year = parent_parsed.year;
                     }
                 }
             }
@@ -620,5 +624,51 @@ mod tests {
         };
         assert_eq!(indexed.title, "2012");
         assert_eq!(indexed.year, Some(2009));
+    }
+
+    /// `Avatar The Last Airbender (2005)/Avatar.The.Last.Airbender.S01E01.mkv`
+    /// — the title lives in the episode filename, so the `(2005)` in the
+    /// folder name must still be used to disambiguate the TMDB lookup.
+    #[tokio::test]
+    async fn series_year_from_parent_directory_disambiguates_tmdb_search() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/search/tv")
+                .query_param("query", "Avatar The Last Airbender")
+                .query_param("first_air_date_year", "2005");
+            then.status(200).json_body(serde_json::json!({
+                "results": [
+                    { "id": 100, "name": "Avatar: The Last Airbender", "first_air_date": "2024-02-07" },
+                    { "id": 200, "name": "Avatar: The Last Airbender", "first_air_date": "2005-02-08" }
+                ]
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/tv/200/external_ids");
+            then.status(200)
+                .json_body(serde_json::json!({ "imdb_id": "tt0417299" }));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/tv/200");
+            then.status(200).json_body(serde_json::json!({
+                "name": "Avatar: The Last Airbender",
+                "first_air_date": "2005-02-08"
+            }));
+        });
+
+        let scanner = make_scanner_with_tmdb(&server.base_url());
+        let dir = tempfile::tempdir().unwrap();
+        let show = dir.path().join("Avatar The Last Airbender (2005)");
+        std::fs::create_dir_all(&show).unwrap();
+        let file = show.join("Avatar.The.Last.Airbender.S01E01.mkv");
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        assert!(
+            matches!(scanner.index.get("tt0417299"), Some(IndexEntry::Series(_))),
+            "the 2005 series must be indexed using the year from the parent directory"
+        );
     }
 }
