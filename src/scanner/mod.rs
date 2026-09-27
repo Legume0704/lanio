@@ -5,7 +5,7 @@ use crate::index::types::{ContentType, FileInfo, ParsedMetadata};
 use crate::index::MediaIndex;
 use crate::metadata::TmdbClient;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use parser::{extract_imdb_id, parse_filename};
+use parser::{dir_chain, extract_imdb_id, parse_filename, parse_season_episode, DirKind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -335,45 +335,60 @@ impl MediaScanner {
         // Check for IMDb ID override in filename
         let mut imdb_id = extract_imdb_id(file_name);
 
-        // For series, check parent directory
-        if parsed.is_series {
-            if let Some(parent) = file_path.parent() {
-                if let Some(parent_name) = parent.file_name().and_then(|n| n.to_str()) {
-                    // Check for IMDb ID in parent directory
-                    if imdb_id.is_none() {
-                        imdb_id = extract_imdb_id(parent_name);
-                    }
+        // A season folder is a series signal on its own, so it counts even
+        // without an SxxEyy in the filename.
+        let dir_chain = dir_chain(file_path, &self.config.media_path);
+        let season_from_dir = dir_chain.iter().find_map(|(_, kind)| match kind {
+            DirKind::Season(season) => Some(*season),
+            DirKind::Show | DirKind::Container => None,
+        });
+        let is_series = parsed.is_series || season_from_dir.is_some();
 
-                    let parent_parsed = parse_filename(parent_name);
+        // Only the season folder named the file an episode, so its filename
+        // names the episode rather than the show.
+        let named_after_episode = !parsed.is_series && season_from_dir.is_some();
 
-                    // Use parent directory as series title if filename didn't have one
-                    if title.is_empty() && !parent_parsed.title.is_empty() {
-                        title = parent_parsed.title.clone();
-                    }
+        // For series, walk the folder chain above the file
+        if is_series {
+            // Any folder may hold an IMDb ID override, including one above the
+            // season folder.
+            if imdb_id.is_none() {
+                imdb_id = dir_chain.iter().find_map(|(name, _)| extract_imdb_id(name));
+            }
 
-                    // The year is a separate fallback: it usually lives only in
-                    // the folder name ("Show Name (2005)"), even when the title
-                    // came from the episode filename. Without it a remake or a
-                    // newer series of the same name wins the TMDB search.
-                    if year.is_none() {
-                        year = parent_parsed.year;
-                    }
+            // The nearest non-season, non-disc folder is the show, so
+            // `Show (2008)/Season 1/ep.mkv` resolves exactly as a flat layout.
+            let show_dir = dir_chain
+                .iter()
+                .find(|(_, kind)| *kind == DirKind::Show)
+                .map(|(name, _)| *name);
+
+            if let Some(show_dir) = show_dir {
+                let show_parsed = parse_filename(show_dir);
+
+                // Fall back to the show folder for the title. It also wins over
+                // the filename when that names the episode.
+                if (title.is_empty() || named_after_episode) && !show_parsed.title.is_empty() {
+                    title = show_parsed.title.clone();
+                }
+
+                // The year usually lives only in the show folder name, and
+                // without it a remake wins the TMDB search. Only the show folder
+                // is read, so `TV (2019)/` cannot pass its year on.
+                if year.is_none() {
+                    year = show_parsed.year;
                 }
             }
         }
 
-        // After trying parent directory for series, check if we have a title.
+        // After trying the folder chain for series, check if we have a title.
         // An IMDb ID override is enough on its own — TMDB supplies the title,
         // so an unparseable title must not drop the file.
         if title.is_empty() && imdb_id.is_none() {
             tracing::warn!(
                 "Could not extract title from: {} {}",
                 file_name,
-                if parsed.is_series {
-                    "or parent directory"
-                } else {
-                    ""
-                }
+                if is_series { "or the show folder" } else { "" }
             );
             return Ok(false);
         }
@@ -382,7 +397,7 @@ impl MediaScanner {
         let metadata = if let Some(imdb_id) = imdb_id {
             tracing::debug!("Found IMDb ID override: {}", imdb_id);
             self.tmdb_client.get_metadata_by_imdb_id(&imdb_id).await
-        } else if parsed.is_series {
+        } else if is_series {
             self.tmdb_client.search_tv_show(&title, year).await
         } else {
             self.tmdb_client.search_movie(&title, year).await
@@ -405,15 +420,22 @@ impl MediaScanner {
             imdb_id: metadata.imdb_id.clone(),
             title,
             year,
-            content_type: if parsed.is_series {
+            content_type: if is_series {
                 ContentType::Series
             } else {
                 ContentType::Movie
             },
             file_path: file_path.to_path_buf(),
             parsed: ParsedMetadata {
-                season: parsed.season,
-                episode: parsed.episode,
+                // A season folder fills in a filename that omits it; on a
+                // conflict the filename wins.
+                season: parsed.season.or(season_from_dir),
+                // Inside a season folder a bare number is the episode, not
+                // part of the title: "Season 01/01 - Pilot.mkv" or
+                // "S01/Pilot.01.mkv".
+                episode: parsed
+                    .episode
+                    .or_else(|| season_from_dir.and_then(|_| parse_season_episode(file_name))),
             },
             poster: self
                 .config
@@ -452,8 +474,15 @@ mod tests {
     }
 
     fn make_scanner_with_tmdb(tmdb_base_url: &str) -> MediaScanner {
+        make_scanner_for_media(
+            tmdb_base_url,
+            std::path::Path::new("/tmp/lanio_test_nonexistent"),
+        )
+    }
+
+    fn make_scanner_for_media(tmdb_base_url: &str, media_path: &Path) -> MediaScanner {
         let config = Arc::new(Config {
-            media_path: std::path::PathBuf::from("/tmp/lanio_test_nonexistent"),
+            media_path: media_path.to_path_buf(),
             port: 8078,
             base_url: None,
             public_url: None,
@@ -474,6 +503,37 @@ mod tests {
             )),
             config,
         )
+    }
+
+    /// Mocks a TV search that only answers for `query` at `year`, so a lookup
+    /// that omits or mistypes the year is left unmatched.
+    fn mock_series(server: &httpmock::MockServer, query: &str, year: &str, id: u32, imdb: &str) {
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/search/tv")
+                .query_param("query", query)
+                .query_param("first_air_date_year", year);
+            then.status(200).json_body(serde_json::json!({
+                "results": [
+                    { "id": 9999, "name": "Some Other Show", "first_air_date": "2021-01-01" },
+                    { "id": id, "name": query, "first_air_date": format!("{year}-01-20") }
+                ]
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path(format!("/tv/{}/external_ids", id));
+            then.status(200)
+                .json_body(serde_json::json!({ "imdb_id": imdb }));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path(format!("/tv/{}", id));
+            then.status(200).json_body(serde_json::json!({
+                "name": query,
+                "first_air_date": format!("{year}-01-20")
+            }));
+        });
     }
 
     #[tokio::test]
@@ -670,5 +730,387 @@ mod tests {
             matches!(scanner.index.get("tt0417299"), Some(IndexEntry::Series(_))),
             "the 2005 series must be indexed using the year from the parent directory"
         );
+    }
+
+    /// The season folder sits between the file and the show folder, so the
+    /// `(2008)` must still reach the TMDB query.
+    #[tokio::test]
+    async fn series_year_read_from_show_folder_through_season_folder() {
+        let server = httpmock::MockServer::start();
+        mock_series(&server, "Breaking Bad", "2008", 1396, "tt0903747");
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("Breaking Bad (2008)")
+            .join("Season 1")
+            .join("Breaking.Bad.S01E01.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        let Some(IndexEntry::Series(episodes)) = scanner.index.get("tt0903747") else {
+            panic!("expected the season folder not to hide the 2008 series");
+        };
+        assert_eq!(episodes[0].parsed.season, Some(1));
+        assert_eq!(episodes[0].parsed.episode, Some(1));
+    }
+
+    /// The IMDb ID lives in the show folder, above the season folder.
+    #[tokio::test]
+    async fn imdb_id_read_from_show_folder_through_season_folder() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/find/tt0903747");
+            then.status(200).json_body(serde_json::json!({
+                "movie_results": [],
+                "tv_results": [{
+                    "name": "Breaking Bad",
+                    "first_air_date": "2008-01-20",
+                    "poster_path": "/poster.jpg"
+                }]
+            }));
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("Breaking Bad (2008) tt0903747")
+            .join("Season 1")
+            .join("Breaking.Bad.S01E01.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        assert!(matches!(
+            scanner.index.get("tt0903747"),
+            Some(IndexEntry::Series(_))
+        ));
+    }
+
+    /// No SxxEyy: the season folder alone makes this an episode, and the show
+    /// folder supplies the title because the filename names the episode.
+    #[tokio::test]
+    async fn episode_without_se_number_in_season_folder_is_indexed_as_series() {
+        let server = httpmock::MockServer::start();
+        mock_series(&server, "Breaking Bad", "2008", 1396, "tt0903747");
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("Breaking Bad (2008)")
+            .join("Season 1")
+            .join("Pilot.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        let Some(IndexEntry::Series(episodes)) = scanner.index.get("tt0903747") else {
+            panic!("a file in a season folder must not be indexed as a movie");
+        };
+        assert_eq!(episodes[0].parsed.season, Some(1));
+        assert_eq!(
+            episodes[0].parsed.episode, None,
+            "no episode number is available without an SxxEyy filename"
+        );
+    }
+
+    /// `Specials` is season 0, matching the S00Exx filename form.
+    #[tokio::test]
+    async fn specials_folder_maps_to_season_zero() {
+        let server = httpmock::MockServer::start();
+        mock_series(&server, "Breaking Bad", "2008", 1396, "tt0903747");
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("Breaking Bad (2008)")
+            .join("Specials")
+            .join("Better Call Saul - El Camino.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        let Some(IndexEntry::Series(episodes)) = scanner.index.get("tt0903747") else {
+            panic!("a file in a Specials folder must be indexed as a series");
+        };
+        assert_eq!(episodes[0].parsed.season, Some(0));
+    }
+
+    /// `Season 01/01 - Pilot.mkv` has no SxxEyy, so the season folder gives the
+    /// season and the filename's leading number gives the episode.
+    #[tokio::test]
+    async fn leading_episode_number_inside_season_folder_is_the_episode() {
+        let server = httpmock::MockServer::start();
+        mock_series(&server, "Breaking Bad", "2008", 1396, "tt0903747");
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("Breaking Bad (2008)")
+            .join("Season 01")
+            .join("01 - Pilot.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        let Some(IndexEntry::Series(episodes)) = scanner.index.get("tt0903747") else {
+            panic!("expected the episode to be indexed against the show folder");
+        };
+        assert_eq!(episodes[0].parsed.season, Some(1));
+        assert_eq!(episodes[0].parsed.episode, Some(1));
+        assert_eq!(episodes[0].title, "Breaking Bad");
+    }
+
+    /// `S01/Pilot.01.mkv` — the bare season folder form, with the episode
+    /// number trailing the title.
+    #[tokio::test]
+    async fn trailing_episode_number_in_bare_season_folder_is_the_episode() {
+        let server = httpmock::MockServer::start();
+        mock_series(&server, "Breaking Bad", "2008", 1396, "tt0903747");
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("Breaking Bad (2008)")
+            .join("S01")
+            .join("Pilot.01.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        let Some(IndexEntry::Series(episodes)) = scanner.index.get("tt0903747") else {
+            panic!("expected the episode to be indexed against the show folder");
+        };
+        assert_eq!(episodes[0].parsed.season, Some(1));
+        assert_eq!(episodes[0].parsed.episode, Some(1));
+        assert_eq!(episodes[0].title, "Breaking Bad");
+    }
+
+    /// `Pilot.01.1080p.mkv` — the episode number trails the title, and the
+    /// release tags behind it must not hide the number.
+    #[tokio::test]
+    async fn episode_number_is_read_from_before_the_release_tags() {
+        let server = httpmock::MockServer::start();
+        mock_series(&server, "Breaking Bad", "2008", 1396, "tt0903747");
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("Breaking Bad (2008)")
+            .join("Season 01")
+            .join("Pilot.01.1080p.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        let Some(IndexEntry::Series(episodes)) = scanner.index.get("tt0903747") else {
+            panic!("expected the episode to be indexed against the show folder");
+        };
+        assert_eq!(episodes[0].parsed.season, Some(1));
+        assert_eq!(episodes[0].parsed.episode, Some(1));
+    }
+
+    /// `Pilot (01) 1080p.mkv` — a bracketed number is still the episode, and
+    /// the year-like digits in `1080p` are not.
+    #[tokio::test]
+    async fn bracketed_episode_number_inside_season_folder_is_the_episode() {
+        let server = httpmock::MockServer::start();
+        mock_series(&server, "Breaking Bad", "2008", 1396, "tt0903747");
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("Breaking Bad (2008)")
+            .join("Season 01")
+            .join("Pilot (01) 1080p.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        let Some(IndexEntry::Series(episodes)) = scanner.index.get("tt0903747") else {
+            panic!("expected the episode to be indexed against the show folder");
+        };
+        assert_eq!(episodes[0].parsed.season, Some(1));
+        assert_eq!(episodes[0].parsed.episode, Some(1));
+    }
+
+    /// A resolution tag must not be read as an episode number.
+    #[tokio::test]
+    async fn quality_tag_is_not_mistaken_for_an_episode_number() {
+        let server = httpmock::MockServer::start();
+        mock_series(&server, "Breaking Bad", "2008", 1396, "tt0903747");
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("Breaking Bad (2008)")
+            .join("Season 01")
+            .join("Pilot.1080p.WEB-DL.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        let Some(IndexEntry::Series(episodes)) = scanner.index.get("tt0903747") else {
+            panic!("expected the episode to be indexed against the show folder");
+        };
+        assert_eq!(episodes[0].parsed.season, Some(1));
+        assert_eq!(
+            episodes[0].parsed.episode, None,
+            "1080p must not be read as episode 1080"
+        );
+    }
+
+    /// An SxxEyy filename is more specific than its folder, so it keeps its
+    /// own season.
+    #[tokio::test]
+    async fn filename_season_wins_over_season_folder() {
+        let server = httpmock::MockServer::start();
+        mock_series(&server, "Breaking Bad", "2008", 1396, "tt0903747");
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("Breaking Bad (2008)")
+            .join("Season 1")
+            .join("Breaking.Bad.S02E05.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        let Some(IndexEntry::Series(episodes)) = scanner.index.get("tt0903747") else {
+            panic!("expected Breaking Bad to be indexed");
+        };
+        assert_eq!(episodes[0].parsed.season, Some(2));
+        assert_eq!(episodes[0].parsed.episode, Some(5));
+    }
+
+    /// A disc folder sits between the file and the show folder, and must not
+    /// be read as the show.
+    #[tokio::test]
+    async fn disc_folder_inside_season_does_not_hide_the_show_folder() {
+        let server = httpmock::MockServer::start();
+        mock_series(&server, "Breaking Bad", "2008", 1396, "tt0903747");
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("Breaking Bad (2008)")
+            .join("Season 1")
+            .join("Disc 1")
+            .join("Breaking.Bad.S01E01.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        let Some(IndexEntry::Series(episodes)) = scanner.index.get("tt0903747") else {
+            panic!("the show folder must be read through the disc folder");
+        };
+        assert_eq!(episodes[0].parsed.season, Some(1));
+        assert_eq!(episodes[0].parsed.episode, Some(1));
+    }
+
+    /// The show folder is above the season folder here, so nothing claims the
+    /// file as an episode.
+    #[tokio::test]
+    async fn movie_beneath_a_season_folder_is_not_an_episode() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/search/movie")
+                .query_param("query", "Sintel")
+                .query_param("year", "2010");
+            then.status(200).json_body(serde_json::json!({
+                "results": [{
+                    "id": 45745, "title": "Sintel", "release_date": "2010-09-27"
+                }]
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/movie/45745");
+            then.status(200).json_body(serde_json::json!({
+                "imdb_id": "tt1727587",
+                "title": "Sintel",
+                "release_date": "2010-09-27"
+            }));
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("Season 1")
+            .join("Sintel (2010)")
+            .join("Sintel.2010.1080p.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        assert!(
+            matches!(scanner.index.get("tt1727587"), Some(IndexEntry::Movie(_))),
+            "only a season folder that owns the file makes it an episode"
+        );
+    }
+
+    /// The mock answers only a yearless query, so borrowing 2019 from
+    /// `TV (2019)` would leave the file unindexed.
+    #[tokio::test]
+    async fn year_comes_from_show_folder_not_a_parent_category() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/search/tv")
+                .query_param("query", "Breaking Bad");
+            then.status(200).json_body(serde_json::json!({
+                "results": [
+                    { "id": 1396, "name": "Breaking Bad", "first_air_date": "2008-01-20" }
+                ]
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/tv/1396/external_ids");
+            then.status(200)
+                .json_body(serde_json::json!({ "imdb_id": "tt0903747" }));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/tv/1396");
+            then.status(200).json_body(serde_json::json!({
+                "name": "Breaking Bad",
+                "first_air_date": "2008-01-20"
+            }));
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media(&server.base_url(), dir.path());
+        let file = dir
+            .path()
+            .join("TV (2019)")
+            .join("Breaking Bad")
+            .join("Season 1")
+            .join("Breaking.Bad.S01E01.mkv");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(
+            scanner.index_file(&file).await.unwrap(),
+            "the show folder carries no year, so the lookup must proceed \
+             without one rather than borrowing 2019 from TV (2019)"
+        );
+        assert!(matches!(
+            scanner.index.get("tt0903747"),
+            Some(IndexEntry::Series(_))
+        ));
     }
 }

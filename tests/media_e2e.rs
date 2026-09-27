@@ -1,6 +1,8 @@
 mod common;
 
-use common::{catalog_has_movie, mock_movie, start_server, wait_until};
+use common::{
+    catalog_has_movie, catalog_has_series, mock_movie, mock_series, start_server, wait_until,
+};
 use httpmock::prelude::*;
 use std::time::Duration;
 use tempfile::tempdir;
@@ -176,4 +178,180 @@ async fn removed_file_disappears_from_catalog() {
     })
     .await;
     assert!(gone, "removed movie still present in catalog");
+}
+
+/// The season folder sits between the file and the show folder, so the year
+/// and the show must still be resolved.
+#[tokio::test]
+async fn season_folder_layout_indexes_and_streams_episode() {
+    let tmdb = MockServer::start();
+    mock_series(&tmdb, "Breaking Bad", Some("2008"), 1396, "tt0903747");
+
+    let temp_media = tempdir().unwrap();
+    let episode_dir = temp_media
+        .path()
+        .join("Breaking Bad (2008)")
+        .join("Season 01");
+    std::fs::create_dir_all(&episode_dir).unwrap();
+    std::fs::write(
+        episode_dir.join("Breaking.Bad.S01E01.mkv"),
+        "fake video data for Breaking Bad S01E01",
+    )
+    .unwrap();
+
+    let base_url = start_server(temp_media.path(), &tmdb.base_url(), None, None).await;
+    let client = reqwest::Client::new();
+
+    let in_catalog = wait_until(20, Duration::from_millis(500), || async {
+        catalog_has_series(&client, &base_url, "Breaking Bad").await
+    })
+    .await;
+    assert!(in_catalog, "series in a season folder not found in catalog");
+
+    let resp = client
+        .get(format!("{}/stream/series/tt0903747:1:1", base_url))
+        .send()
+        .await
+        .unwrap();
+    let stream_resp: serde_json::Value = resp.json().await.unwrap();
+    let stream_url = stream_resp["streams"][0]["url"]
+        .as_str()
+        .expect("expected a stream for S01E01")
+        .to_string();
+
+    let video_resp = client.get(stream_url).send().await.unwrap();
+    assert!(
+        video_resp.status().is_success(),
+        "video request failed for a file inside a season folder"
+    );
+    assert_eq!(
+        video_resp.text().await.unwrap(),
+        "fake video data for Breaking Bad S01E01",
+    );
+}
+
+/// `Season 01/01 - Pilot.mkv` has no SxxEyy, so the season comes from the
+/// folder and the episode from the filename's leading number.
+#[tokio::test]
+async fn leading_episode_number_inside_season_folder_streams() {
+    let tmdb = MockServer::start();
+    mock_series(&tmdb, "Breaking Bad", Some("2008"), 1396, "tt0903747");
+
+    let temp_media = tempdir().unwrap();
+    let episode_dir = temp_media
+        .path()
+        .join("Breaking Bad (2008)")
+        .join("Season 01");
+    std::fs::create_dir_all(&episode_dir).unwrap();
+    std::fs::write(
+        episode_dir.join("01 - Pilot.mkv"),
+        "fake video data for the Breaking Bad pilot",
+    )
+    .unwrap();
+
+    let base_url = start_server(temp_media.path(), &tmdb.base_url(), None, None).await;
+    let client = reqwest::Client::new();
+
+    let in_catalog = wait_until(20, Duration::from_millis(500), || async {
+        catalog_has_series(&client, &base_url, "Breaking Bad").await
+    })
+    .await;
+    assert!(in_catalog, "series in a season folder not found in catalog");
+
+    let resp = client
+        .get(format!("{}/stream/series/tt0903747:1:1", base_url))
+        .send()
+        .await
+        .unwrap();
+    let stream_resp: serde_json::Value = resp.json().await.unwrap();
+    let stream_url = stream_resp["streams"][0]["url"]
+        .as_str()
+        .expect("a leading episode number must resolve to a streamable episode")
+        .to_string();
+
+    let video_resp = client.get(stream_url).send().await.unwrap();
+    assert!(video_resp.status().is_success());
+    assert_eq!(
+        video_resp.text().await.unwrap(),
+        "fake video data for the Breaking Bad pilot",
+    );
+}
+
+/// `S01/Pilot.01.mkv` — the number trails the title, and a bare `S01` folder
+/// supplies the season.
+#[tokio::test]
+async fn trailing_episode_number_in_bare_season_folder_streams() {
+    let tmdb = MockServer::start();
+    mock_series(&tmdb, "Breaking Bad", Some("2008"), 1396, "tt0903747");
+
+    let temp_media = tempdir().unwrap();
+    let episode_dir = temp_media.path().join("Breaking Bad (2008)").join("S01");
+    std::fs::create_dir_all(&episode_dir).unwrap();
+    std::fs::write(
+        episode_dir.join("Pilot.01.mkv"),
+        "fake video data for the Breaking Bad pilot",
+    )
+    .unwrap();
+
+    let base_url = start_server(temp_media.path(), &tmdb.base_url(), None, None).await;
+    let client = reqwest::Client::new();
+
+    let in_catalog = wait_until(20, Duration::from_millis(500), || async {
+        catalog_has_series(&client, &base_url, "Breaking Bad").await
+    })
+    .await;
+    assert!(
+        in_catalog,
+        "series in a bare S01 folder not found in catalog"
+    );
+
+    let resp = client
+        .get(format!("{}/stream/series/tt0903747:1:1", base_url))
+        .send()
+        .await
+        .unwrap();
+    let stream_resp: serde_json::Value = resp.json().await.unwrap();
+    let stream_url = stream_resp["streams"][0]["url"]
+        .as_str()
+        .expect("a trailing episode number must resolve to a streamable episode")
+        .to_string();
+
+    let video_resp = client.get(stream_url).send().await.unwrap();
+    assert!(video_resp.status().is_success());
+    assert_eq!(
+        video_resp.text().await.unwrap(),
+        "fake video data for the Breaking Bad pilot",
+    );
+}
+
+/// No SxxEyy, but `Specials` still makes it an episode — of season 0.
+#[tokio::test]
+async fn specials_folder_episode_reaches_the_series_catalog() {
+    let tmdb = MockServer::start();
+    mock_series(&tmdb, "Breaking Bad", Some("2008"), 1396, "tt0903747");
+
+    let temp_media = tempdir().unwrap();
+    let specials = temp_media
+        .path()
+        .join("Breaking Bad (2008)")
+        .join("Specials");
+    std::fs::create_dir_all(&specials).unwrap();
+    std::fs::write(
+        specials.join("El Camino.mkv"),
+        "fake video data for the El Camino special",
+    )
+    .unwrap();
+
+    let base_url = start_server(temp_media.path(), &tmdb.base_url(), None, None).await;
+    let client = reqwest::Client::new();
+
+    let in_catalog = wait_until(20, Duration::from_millis(500), || async {
+        catalog_has_series(&client, &base_url, "Breaking Bad").await
+    })
+    .await;
+    assert!(
+        in_catalog,
+        "a Specials folder must be read as season 0 of the show, not a movie \
+         named \"Specials\""
+    );
 }
