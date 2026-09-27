@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.6]
 
+- Build a Docker image for every pull request, tagged with the branch name and the pull request number
+- Remove the pull request image from the registry when the pull request is merged or closed
 - Fix movies with a numeric title (`2012`, `1917`) never being indexed
 - Honour an IMDb ID in the filename when the title cannot be parsed, and strip it from the parsed title
 - Select TMDB search results by release year instead of the top-ranked hit, so remakes and newer entries no longer shadow the copy on disk
