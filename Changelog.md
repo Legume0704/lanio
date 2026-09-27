@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7]
+
+- Support season folders in a series directory (`Show Name (2005)/Season 01/`)
+  - The show name, year, and IMDb ID come from the show folder above the season folder
+  - Recognises `Season 01`, `S01`, `Saison`, `Staffel`, and `Temporada`; `Specials` and `Extras` are season 0
+  - Disc folders inside a season (`Season 01/Disc 1/`) are folded in, and a file with no `SxxEyy` is now an episode rather than a movie named after the season folder
+  - The number is read from either end of the filename, including bracketed and past release tags, so `S01/Pilot (01) 1080p.mkv` and `Season 01/01 - Pilot.mkv` both resolve
+  - A season folder needs a show folder above it, or there is no show name to match against TMDB
+- Fix the pull request image deletion
+
 ## [0.5.6]
 
 - Build a Docker image for every pull request, tagged with the branch name and the pull request number

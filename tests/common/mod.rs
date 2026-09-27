@@ -87,6 +87,57 @@ pub fn mock_movie_named(
     });
 }
 
+/// Mocks a TV show lookup. With `year` as `Some` the search mock answers only
+/// that year, so a test can assert a lookup carried the year it should have.
+pub fn mock_series(server: &MockServer, query: &str, year: Option<&str>, id: u32, imdb_id: &str) {
+    let search = json!({
+        "id": id,
+        "name": query,
+        "overview": "A thrilling test overview.",
+        "first_air_date": format!("{}-01-20", year.unwrap_or("2015")),
+        "poster_path": "/poster.jpg",
+        "vote_average": 8.8,
+        "vote_count": 4200
+    });
+    let results = json!({ "results": [search.clone()] });
+    match year {
+        Some(y) => {
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search/tv")
+                    .query_param("query", query)
+                    .query_param("first_air_date_year", y);
+                then.status(200).json_body(results);
+            });
+        }
+        // Answer only when no year was sent, so a lookup that wrongly supplied
+        // one is left unmatched.
+        None => {
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/search/tv")
+                    .query_param("query", query)
+                    .matches(|req| {
+                        req.query_params.as_ref().is_none_or(|params| {
+                            !params
+                                .iter()
+                                .any(|(key, _)| key.as_str() == "first_air_date_year")
+                        })
+                    });
+                then.status(200).json_body(results);
+            });
+        }
+    }
+    server.mock(|when, then| {
+        when.method(GET).path(format!("/tv/{}/external_ids", id));
+        then.status(200).json_body(json!({ "imdb_id": imdb_id }));
+    });
+    server.mock(|when, then| {
+        when.method(GET).path(format!("/tv/{}", id));
+        then.status(200).json_body(search);
+    });
+}
+
 pub async fn start_server(
     media_path: &std::path::Path,
     tmdb_base_url: &str,
@@ -131,6 +182,22 @@ pub async fn start_server(
 pub async fn catalog_has_movie(client: &reqwest::Client, base_url: &str, name: &str) -> bool {
     let resp = client
         .get(format!("{}/catalog/movie/lanio-movies", base_url))
+        .send()
+        .await;
+    if let Ok(r) = resp {
+        if let Ok(json) = r.json::<serde_json::Value>().await {
+            return json["metas"]
+                .as_array()
+                .map(|m| m.iter().any(|x| x["name"] == name))
+                .unwrap_or(false);
+        }
+    }
+    false
+}
+
+pub async fn catalog_has_series(client: &reqwest::Client, base_url: &str, name: &str) -> bool {
+    let resp = client
+        .get(format!("{}/catalog/series/lanio-series", base_url))
         .send()
         .await;
     if let Ok(r) = resp {
