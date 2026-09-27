@@ -6,22 +6,27 @@
 # request is merged or closed, so a pull request image never outlives the branch
 # that produced it.
 #
+# GitHub Packages has no delete on the registry API (DELETE /v2/<name>/manifests/
+# <digest> answers 405), so this goes through the REST API: find the package
+# version carrying the tag, then delete that version.
+#
 # Environment:
 #   GITHUB_REPOSITORY  owner/name of the repository
-#   GITHUB_ACTOR       registry username, paired with GH_TOKEN
-#   GH_TOKEN           token that can write to the package
+#   GH_TOKEN           token that can read and delete packages
 #   PR_NUMBER          pull request number
 #   HEAD_REF           branch the pull request came from
 #   HEAD_REPO          owner/name the pull request came from
+#   PR_TAG             tag to remove, instead of deriving one from the pull request
 #
-# Exits non-zero only when the tag is in the registry and cannot be deleted.
+# Exits non-zero when the tag is in the registry and cannot be deleted.
 
 set -uo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
-repo=$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
-image="ghcr.io/$repo"
+owner=${GITHUB_REPOSITORY%%/*}
+repo_name=${GITHUB_REPOSITORY#*/}
+image="ghcr.io/$owner/$repo_name"
 
 # Say what happened, and put it in the job summary when running in Actions.
 summary_started=0
@@ -38,13 +43,56 @@ report() {
 	echo "$1" >> "$GITHUB_STEP_SUMMARY"
 }
 
-# Pull requests from forks never got an image pushed.
-if [ "${HEAD_REPO:-}" != "$GITHUB_REPOSITORY" ]; then
+# Call the GitHub API with the given method (GET by default), leaving the
+# response in api_body and the status in api_status. Never fails, so a problem
+# can be reported with GitHub's own explanation of it rather than a bare curl
+# error.
+api_body=""
+api_status=0
+api() {
+	local method=${2:-GET} response
+	response=$(curl -sS -X "$method" -w '\n%{http_code}' \
+		-H "Authorization: Bearer $GH_TOKEN" \
+		-H "Accept: application/vnd.github+json" \
+		-H "X-GitHub-Api-Version: 2022-11-28" \
+		"https://api.github.com$1")
+	api_status=${response##*$'\n'}
+	api_body=${response%$'\n'*}
+	# A connection failure leaves no status behind, so do not test it as a number.
+	case "$api_status" in
+	'' | *[!0-9]*) return 1 ;;
+	esac
+	[ "$api_status" -lt 400 ]
+}
+
+api_error() {
+	local message
+	message=$(printf '%s' "$api_body" | jq -r '.message // empty' 2>/dev/null)
+	[ -n "$api_status" ] || {
+		echo "no response from the GitHub API"
+		return
+	}
+	[ -z "$message" ] || {
+		printf 'HTTP %s: %s' "$api_status" "$message"
+		return
+	}
+	printf 'HTTP %s' "$api_status"
+}
+
+# Pull requests from forks never got an image pushed. A run started by hand is
+# always about this repository, so it has no HEAD_REPO to compare against.
+if [ -z "${PR_TAG:-}" ] && [ "${HEAD_REPO:-}" != "$GITHUB_REPOSITORY" ]; then
 	report "PR #$PR_NUMBER is from ${HEAD_REPO:-unknown}, no image was published for it."
 	exit 0
 fi
 
-tag=$("$script_dir/pr-image-tag.sh" "$PR_NUMBER" "$HEAD_REF")
+# A run started by hand names the tag itself, since the pull request that owned
+# the tag is long gone by then.
+if [ -n "${PR_TAG:-}" ]; then
+	tag=$PR_TAG
+else
+	tag=$("$script_dir/pr-image-tag.sh" "$PR_NUMBER" "$HEAD_REF")
+fi
 
 # Only ever delete a pull request image, whatever the tag script hands back.
 case "$tag" in
@@ -55,38 +103,43 @@ pr-*) ;;
 	;;
 esac
 
-token=$(curl -fsS -u "${GITHUB_ACTOR}:${GH_TOKEN}" \
-	"https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull,push" |
-	jq -r '.token')
-if [ -z "$token" ] || [ "$token" = "null" ]; then
-	report "::error::Could not get a registry token for $repo"
+# A package is listed under its owner, which is a user or an organization.
+if ! api "/repos/$owner/$repo_name"; then
+	report "::error::Could not read $GITHUB_REPOSITORY ($(api_error))"
 	exit 1
 fi
+if [ "$(printf '%s' "$api_body" | jq -r '.owner.type' | tr '[:upper:]' '[:lower:]')" = "organization" ]; then
+	versions="/orgs/$owner/packages/container/$repo_name/versions"
+else
+	versions="/users/$owner/packages/container/$repo_name/versions"
+fi
 
-manifest_types='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
+# The package version holding the tag, if it is still there. Newest first, so
+# this normally lands on the first page.
+version_id=""
+page=1
+while [ "$page" -le 20 ]; do
+	if ! api "$versions?per_page=100&page=$page"; then
+		report "::error::Could not list versions of package $repo_name ($(api_error))"
+		exit 1
+	fi
+	version_id=$(printf '%s' "$api_body" |
+		jq -r --arg tag "$tag" \
+			'.[] | select((.metadata.container.tags // []) | index($tag)) | .id' |
+		head -1)
+	[ -n "$version_id" ] && break
+	[ "$(printf '%s' "$api_body" | jq 'length')" -lt 100 ] && break
+	page=$((page + 1))
+done
 
-# The digest behind a tag. Empty when the tag is not in the registry, which is
-# safe to read as absent: the token request above already reached the registry.
-digest=$(curl -fsS -o /dev/null -D - \
-	-H "Authorization: Bearer $token" \
-	-H "Accept: $manifest_types" \
-	"https://ghcr.io/v2/${repo}/manifests/${tag}" 2>/dev/null |
-	tr -d '\r' |
-	awk 'tolower($1) == "docker-content-digest:" { print $2 }')
-
-if [ -z "$digest" ]; then
-	report "$image:$tag was not in the registry"
+if [ -z "$version_id" ]; then
+	report "$image:$tag is not in the registry"
 	exit 0
 fi
 
-code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
-	-H "Authorization: Bearer $token" \
-	"https://ghcr.io/v2/${repo}/manifests/${digest}")
-case "$code" in
-2*) report "Deleted $image:$tag ($digest)" ;;
-404 | 405) report "$image:$tag was already gone" ;;
-*)
-	report "::error::Could not delete $image:$tag (HTTP $code)"
+if api "$versions/$version_id" DELETE; then
+	report "Deleted $image:$tag (package version $version_id)"
+else
+	report "::error::Could not delete $image:$tag ($(api_error))"
 	exit 1
-	;;
-esac
+fi

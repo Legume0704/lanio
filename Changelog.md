@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Disc folders inside a season (`Season 01/Disc 1/`) are folded in, and a file with no `SxxEyy` is now an episode rather than a movie named after the season folder
   - The number is read from either end of the filename, including bracketed and past release tags, so `S01/Pilot (01) 1080p.mkv` and `Season 01/01 - Pilot.mkv` both resolve
   - A season folder needs a show folder above it, or there is no show name to match against TMDB
+- Fix the pull request image deletion
 
 ## [0.5.6]
 
