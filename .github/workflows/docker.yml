@@ -166,7 +166,6 @@ jobs:
           retention-days: 1
 
   publish-image:
-    name: Publish image
     runs-on: ubuntu-latest
     needs: [tag, build]
     if: >-
