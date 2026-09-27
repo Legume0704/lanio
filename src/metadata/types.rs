@@ -22,6 +22,8 @@ pub struct TmdbSearchResult {
     #[serde(alias = "name")]
     pub title: Option<String>,
     pub poster_path: Option<String>,
+    #[serde(alias = "first_air_date")]
+    pub release_date: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

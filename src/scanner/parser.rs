@@ -19,6 +19,7 @@ lazy_static! {
         r"\.(?i)(mkv|mp4|avi|mov|wmv|flv|webm|m4v|mpg|mpeg|m2ts|ts|vob)$"
     ).unwrap();
     static ref SEPARATOR_REGEX: Regex = Regex::new(r"[\.\-_]+").unwrap();
+    static ref ALPHANUMERIC: Regex = Regex::new(r"[0-9A-Za-z]").unwrap();
 }
 
 #[derive(Debug, Clone)]
@@ -33,8 +34,13 @@ pub struct ParsedFilename {
 pub fn parse_filename(filename: &str) -> ParsedFilename {
     let mut working = filename.to_string();
 
-    // Extract year and its position
-    let year_match = YEAR_REGEX.find(&working);
+    // An IMDb ID is metadata, never part of the title.
+    working = IMDB_ID_REGEX.replace_all(&working, " ").to_string();
+
+    // Extract year and its position. A number only counts as a year when there
+    // is title content in front of it — otherwise a numeric title like "2012"
+    // is consumed as the year and the title parses to nothing.
+    let year_match = find_year(&working);
     let year = year_match
         .as_ref()
         .and_then(|m| m.as_str().parse::<u16>().ok());
@@ -89,6 +95,14 @@ pub fn parse_filename(filename: &str) -> ParsedFilename {
 
 pub fn extract_imdb_id(text: &str) -> Option<String> {
     IMDB_ID_REGEX.find(text).map(|m| m.as_str().to_lowercase())
+}
+
+/// First 1900-2099 number that has at least one alphanumeric character in
+/// front of it, so a leading numeric title is not mistaken for a release year.
+fn find_year(text: &str) -> Option<regex::Match<'_>> {
+    YEAR_REGEX
+        .find_iter(text)
+        .find(|m| ALPHANUMERIC.is_match(&text[..m.start()]))
 }
 
 #[cfg(test)]
@@ -164,5 +178,61 @@ mod tests {
         let parsed = parse_filename("The.Matrix.1999.1080p.BluRay.x264-GROUP.mkv");
         assert_eq!(parsed.title, "The Matrix");
         assert_eq!(parsed.year, Some(1999));
+    }
+
+    #[test]
+    fn test_numeric_title_with_year() {
+        let parsed = parse_filename("2012.2009.1080p.BluRay.mkv");
+        assert_eq!(parsed.title, "2012");
+        assert_eq!(parsed.year, Some(2009));
+        assert!(!parsed.is_series);
+    }
+
+    #[test]
+    fn test_numeric_title_in_parentheses() {
+        let parsed = parse_filename("2012 (2009).mkv");
+        assert_eq!(parsed.title, "2012");
+        assert_eq!(parsed.year, Some(2009));
+    }
+
+    #[test]
+    fn test_numeric_title_without_release_year() {
+        let parsed = parse_filename("2012.mkv");
+        assert_eq!(parsed.title, "2012");
+        assert_eq!(parsed.year, None);
+    }
+
+    #[test]
+    fn test_numeric_title_with_imdb_id() {
+        let parsed = parse_filename("2012.tt1099212.mkv");
+        assert_eq!(parsed.title, "2012");
+        assert_eq!(parsed.year, None);
+    }
+
+    #[test]
+    fn test_numeric_title_within_longer_title() {
+        let parsed = parse_filename("2001.A.Space.Odyssey.1968.1080p.mkv");
+        assert_eq!(parsed.title, "2001 A Space Odyssey");
+        assert_eq!(parsed.year, Some(1968));
+    }
+
+    #[test]
+    fn test_bracketed_numeric_title() {
+        let parsed = parse_filename("(2012).2009.mkv");
+        assert_eq!(parsed.title, "2012");
+        assert_eq!(parsed.year, Some(2009));
+    }
+
+    #[test]
+    fn test_four_digit_numeric_title_alone_is_not_a_year() {
+        let parsed = parse_filename("1917.mkv");
+        assert_eq!(parsed.title, "1917");
+        assert_eq!(parsed.year, None);
+    }
+
+    #[test]
+    fn test_imdb_id_is_stripped_from_title() {
+        let parsed = parse_filename("Movie.Name.tt1234567.mkv");
+        assert_eq!(parsed.title, "Movie Name");
     }
 }

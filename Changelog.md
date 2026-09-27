@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6]
+
+- Build a Docker image for every pull request, tagged with the branch name and the pull request number
+- Remove the pull request image from the registry when the pull request is merged or closed
+- Fix movies with a numeric title (`2012`, `1917`) never being indexed
+- Honour an IMDb ID in the filename when the title cannot be parsed, and strip it from the parsed title
+- Select TMDB search results by release year instead of the top-ranked hit, so remakes and newer entries no longer shadow the copy on disk
+  - The year is now also read from a series folder name (`Show Name (2005)`) when the episode filename doesn't carry one
+
 ## [0.5.5]
 
 - Update GitHub Actions used by the CI and Docker build workflows:

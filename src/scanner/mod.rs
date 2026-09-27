@@ -344,22 +344,28 @@ impl MediaScanner {
                         imdb_id = extract_imdb_id(parent_name);
                     }
 
+                    let parent_parsed = parse_filename(parent_name);
+
                     // Use parent directory as series title if filename didn't have one
-                    if title.is_empty() {
-                        let parent_parsed = parse_filename(parent_name);
-                        if !parent_parsed.title.is_empty() {
-                            title = parent_parsed.title;
-                            if year.is_none() {
-                                year = parent_parsed.year;
-                            }
-                        }
+                    if title.is_empty() && !parent_parsed.title.is_empty() {
+                        title = parent_parsed.title.clone();
+                    }
+
+                    // The year is a separate fallback: it usually lives only in
+                    // the folder name ("Show Name (2005)"), even when the title
+                    // came from the episode filename. Without it a remake or a
+                    // newer series of the same name wins the TMDB search.
+                    if year.is_none() {
+                        year = parent_parsed.year;
                     }
                 }
             }
         }
 
-        // After trying parent directory for series, check if we have a title
-        if title.is_empty() {
+        // After trying parent directory for series, check if we have a title.
+        // An IMDb ID override is enough on its own — TMDB supplies the title,
+        // so an unparseable title must not drop the file.
+        if title.is_empty() && imdb_id.is_none() {
             tracing::warn!(
                 "Could not extract title from: {} {}",
                 file_name,
@@ -436,18 +442,23 @@ impl MediaScanner {
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::index::types::IndexEntry;
     use crate::index::MediaIndex;
     use crate::metadata::TmdbClient;
     use std::sync::atomic::Ordering;
 
     fn make_scanner() -> MediaScanner {
+        make_scanner_with_tmdb("http://localhost")
+    }
+
+    fn make_scanner_with_tmdb(tmdb_base_url: &str) -> MediaScanner {
         let config = Arc::new(Config {
             media_path: std::path::PathBuf::from("/tmp/lanio_test_nonexistent"),
             port: 8078,
             base_url: None,
             public_url: None,
             tmdb_api_key: "fake".to_string(),
-            tmdb_base_url: "http://localhost".to_string(),
+            tmdb_base_url: tmdb_base_url.to_string(),
             tmdb_image_base_url: "http://localhost".to_string(),
             password: None,
             auth_token: None,
@@ -458,7 +469,7 @@ mod tests {
             Arc::new(MediaIndex::new()),
             Arc::new(TmdbClient::new(
                 "fake".to_string(),
-                "http://localhost".to_string(),
+                tmdb_base_url.to_string(),
                 "http://localhost".to_string(),
             )),
             config,
@@ -539,5 +550,125 @@ mod tests {
         );
         scanner.start().await;
         assert!(!scanner.scanning.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn indexes_numeric_titled_movie_with_imdb_id_override() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/find/tt1099212");
+            then.status(200).json_body(serde_json::json!({
+                "movie_results": [{
+                    "title": "2012",
+                    "overview": "A Mayan apocalypse.",
+                    "release_date": "2009-11-13",
+                    "poster_path": "/poster.jpg",
+                    "vote_average": 6.8,
+                    "vote_count": 9000
+                }],
+                "tv_results": []
+            }));
+        });
+
+        let scanner = make_scanner_with_tmdb(&server.base_url());
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("2012.tt1099212.mkv");
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(
+            scanner.index_file(&file).await.unwrap(),
+            "a file with a valid IMDb ID must be indexed even when the \
+             parsed title is empty"
+        );
+        assert!(matches!(
+            scanner.index.get("tt1099212"),
+            Some(IndexEntry::Movie(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn indexes_numeric_titled_movie_by_title_search() {
+        let server = httpmock::MockServer::start();
+        let details = serde_json::json!({
+            "id": 65754,
+            "imdb_id": "tt1099212",
+            "title": "2012",
+            "overview": "A Mayan apocalypse.",
+            "release_date": "2009-11-13",
+            "poster_path": "/poster.jpg",
+            "vote_average": 6.8,
+            "vote_count": 9000
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/search/movie")
+                .query_param("query", "2012")
+                .query_param("year", "2009");
+            then.status(200)
+                .json_body(serde_json::json!({ "results": [details] }));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/movie/65754");
+            then.status(200).json_body(details);
+        });
+
+        let scanner = make_scanner_with_tmdb(&server.base_url());
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("2012.2009.1080p.BluRay.mkv");
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+
+        let Some(IndexEntry::Movie(indexed)) = scanner.index.get("tt1099212") else {
+            panic!("expected 2012 to be indexed as a movie");
+        };
+        assert_eq!(indexed.title, "2012");
+        assert_eq!(indexed.year, Some(2009));
+    }
+
+    /// `Avatar The Last Airbender (2005)/Avatar.The.Last.Airbender.S01E01.mkv`
+    /// — the title lives in the episode filename, so the `(2005)` in the
+    /// folder name must still be used to disambiguate the TMDB lookup.
+    #[tokio::test]
+    async fn series_year_from_parent_directory_disambiguates_tmdb_search() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/search/tv")
+                .query_param("query", "Avatar The Last Airbender")
+                .query_param("first_air_date_year", "2005");
+            then.status(200).json_body(serde_json::json!({
+                "results": [
+                    { "id": 100, "name": "Avatar: The Last Airbender", "first_air_date": "2024-02-07" },
+                    { "id": 200, "name": "Avatar: The Last Airbender", "first_air_date": "2005-02-08" }
+                ]
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/tv/200/external_ids");
+            then.status(200)
+                .json_body(serde_json::json!({ "imdb_id": "tt0417299" }));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/tv/200");
+            then.status(200).json_body(serde_json::json!({
+                "name": "Avatar: The Last Airbender",
+                "first_air_date": "2005-02-08"
+            }));
+        });
+
+        let scanner = make_scanner_with_tmdb(&server.base_url());
+        let dir = tempfile::tempdir().unwrap();
+        let show = dir.path().join("Avatar The Last Airbender (2005)");
+        std::fs::create_dir_all(&show).unwrap();
+        let file = show.join("Avatar.The.Last.Airbender.S01E01.mkv");
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        assert!(
+            matches!(scanner.index.get("tt0417299"), Some(IndexEntry::Series(_))),
+            "the 2005 series must be indexed using the year from the parent directory"
+        );
     }
 }
