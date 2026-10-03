@@ -29,6 +29,9 @@ pub struct Stream {
 pub struct BehaviorHints {
     #[serde(rename = "bingeGroup")]
     pub binge_group: String,
+    /// Served over plain http and usually not MP4, so Stremio's spec requires this.
+    #[serde(rename = "notWebReady")]
+    pub not_web_ready: bool,
     #[serde(rename = "videoSize", skip_serializing_if = "Option::is_none")]
     pub video_size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,9 +127,9 @@ async fn stream_inner(
 
     tracing::debug!("  Found: {} ({:?})", file_info.title, file_info.file_path);
 
-    // Encode file path for URL
+    // Encode file path for URL. URL-safe so '+' isn't decoded as a space.
     let encoded_path =
-        general_purpose::STANDARD.encode(file_info.file_path.to_string_lossy().as_bytes());
+        general_purpose::URL_SAFE_NO_PAD.encode(file_info.file_path.to_string_lossy().as_bytes());
 
     // Construct stream URL
     let base_url = state
@@ -172,6 +175,7 @@ async fn stream_inner(
         name: "🏠 Lanio".to_string(),
         behavior_hints: BehaviorHints {
             binge_group: "lanio".to_string(),
+            not_web_ready: true,
             video_size: file_size,
             filename,
         },

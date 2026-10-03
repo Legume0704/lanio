@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8]
+
+- Fix video links whose base64 path contained a `+`, which was read back as a space and rejected; links now use URL-safe base64
+- Answer out-of-range requests with `416 Range Not Satisfiable` instead of `400`, and support suffix ranges (`bytes=-N`)
+- Set `behaviorHints.notWebReady` on streams, as Stremio requires for plain-http and non-MP4 URLs
+- Log each video request's range and response at debug level, along with how many bytes were sent before the connection closed
+
 ## [0.5.7]
 
 - Support season folders in a series directory (`Show Name (2005)/Season 01/`)
