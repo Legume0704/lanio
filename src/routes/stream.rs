@@ -124,9 +124,9 @@ async fn stream_inner(
 
     tracing::debug!("  Found: {} ({:?})", file_info.title, file_info.file_path);
 
-    // Encode file path for URL
+    // Encode file path for URL. URL-safe so '+' isn't decoded as a space.
     let encoded_path =
-        general_purpose::STANDARD.encode(file_info.file_path.to_string_lossy().as_bytes());
+        general_purpose::URL_SAFE_NO_PAD.encode(file_info.file_path.to_string_lossy().as_bytes());
 
     // Construct stream URL
     let base_url = state
