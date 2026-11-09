@@ -33,6 +33,11 @@ async fn unmatched_files_are_listed_and_streamable_when_enabled() {
         "fake sports recording",
     )
     .unwrap();
+    std::fs::write(
+        temp_media.path().join("2024 Brazilian Grand Prix.jpg"),
+        "fake channel logo",
+    )
+    .unwrap();
     // Non-video sidecars must not be listed.
     std::fs::write(
         temp_media.path().join("2024 Brazilian Grand Prix.nfo"),
@@ -74,7 +79,15 @@ async fn unmatched_files_are_listed_and_streamable_when_enabled() {
     );
     assert_eq!(meta["type"], "other");
     assert_eq!(meta["name"], "2024 Brazilian Grand Prix.ts");
-    assert!(meta.get("poster").is_none());
+    let poster_url = meta["poster"]
+        .as_str()
+        .expect("a filename-matched sidecar should become the poster");
+    assert!(poster_url.contains("/poster/"));
+
+    // The entire folder's artwork must not be used.
+    let poster_response = client.get(poster_url).send().await.unwrap();
+    assert!(poster_response.status().is_success());
+    assert_eq!(poster_response.text().await.unwrap(), "fake channel logo");
 
     // The existing matched-movie catalog is untouched.
     let movies = catalog_metas(&client, &base_url, "movie", "lanio-movies").await;
@@ -96,6 +109,10 @@ async fn unmatched_files_are_listed_and_streamable_when_enabled() {
         .as_str()
         .expect("unmatched detail page must expose a stream")
         .to_string();
+    assert_eq!(
+        meta_response["meta"]["poster"], poster_url,
+        "the detail page should use the same sidecar poster"
+    );
 
     let video_response = client.get(stream_url).send().await.unwrap();
     assert!(video_response.status().is_success());

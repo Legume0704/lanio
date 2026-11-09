@@ -1,3 +1,4 @@
+use crate::routes::poster::poster_url;
 use crate::routes::stream::{stream_for_file, Stream, StreamState};
 use axum::{
     extract::{Path, State},
@@ -17,6 +18,8 @@ pub struct Meta {
     #[serde(rename = "type")]
     pub content_type: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poster: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub videos: Option<Vec<Video>>,
     /// Lets Stremio show the file list instead of a single detail page.
@@ -58,12 +61,14 @@ fn meta_inner(content_type: String, id: String, state: &StreamState) -> MetaResp
     };
 
     let stream = stream_for_file(&file.title, &file.file_path, &state.config);
+    let poster = poster_url(&state.config, &file);
 
     MetaResponse {
         meta: Some(Meta {
             id: file.id.clone(),
             content_type: "other".to_string(),
             name: file.title.clone(),
+            poster,
             videos: Some(vec![Video {
                 id: file.id,
                 title: file.title,
@@ -141,6 +146,27 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with("http://lan.local:8078/video?path="));
+    }
+
+    #[tokio::test]
+    async fn detail_page_uses_a_filename_matched_poster() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("2024 Brazilian Grand Prix.ts");
+        std::fs::write(&video, b"").unwrap();
+        std::fs::write(dir.path().join("2024 Brazilian Grand Prix.jpg"), b"").unwrap();
+
+        let state = make_state(true);
+        state.scanner.index.insert_unmatched(UnmatchedFile {
+            id: "lanio-abc123".to_string(),
+            title: "2024 Brazilian Grand Prix.ts".to_string(),
+            file_path: video,
+            created: Some(1000),
+        });
+
+        let response = meta_inner("other".to_string(), "lanio-abc123".to_string(), &state);
+        let meta = response.meta.expect("unmatched file must have meta");
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["poster"], "http://lan.local:8078/poster/lanio-abc123");
     }
 
     #[tokio::test]

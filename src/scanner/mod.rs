@@ -17,6 +17,9 @@ const VIDEO_EXTENSIONS: &[&str] = &[
     "mkv", "mp4", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "m2ts", "ts", "vob",
 ];
 
+/// Image types accepted as a poster sidecar next to an unmatched video.
+const POSTER_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "JPG", "JPEG", "PNG", "WEBP"];
+
 /// Prefix for IDs generated for files that have no TMDB match.
 pub const UNMATCHED_ID_PREFIX: &str = "lanio-";
 
@@ -30,6 +33,16 @@ pub fn unmatched_id(file_path: &Path) -> String {
         .map(|byte| format!("{:02x}", byte))
         .collect();
     format!("{}{}", UNMATCHED_ID_PREFIX, suffix)
+}
+
+/// Finds a poster sidecar: an image beside the video with the same basename.
+/// For `game.ts` this looks for `game.jpg`, then `game.jpeg`, `game.png` and
+/// `game.webp` (also in upper case).
+pub fn poster_sidecar(file_path: &Path) -> Option<PathBuf> {
+    POSTER_EXTENSIONS
+        .iter()
+        .map(|extension| file_path.with_extension(extension))
+        .find(|candidate| candidate.is_file())
 }
 
 fn unmatched_file(file_path: &Path) -> UnmatchedFile {
@@ -1228,6 +1241,49 @@ mod tests {
             unmatched_id(path),
             unmatched_id(Path::new("/media/recordings/other.ts"))
         );
+    }
+
+    #[test]
+    fn poster_sidecar_matches_the_video_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("game.ts");
+        std::fs::write(&video, b"").unwrap();
+
+        assert_eq!(poster_sidecar(&video), None, "no sidecar exists yet");
+
+        // A folder-level poster or another recording's image is not a match.
+        std::fs::write(dir.path().join("poster.jpg"), b"").unwrap();
+        std::fs::write(dir.path().join("other.jpg"), b"").unwrap();
+        assert_eq!(poster_sidecar(&video), None);
+
+        let sidecar = dir.path().join("game.jpg");
+        std::fs::write(&sidecar, b"").unwrap();
+        assert_eq!(poster_sidecar(&video), Some(sidecar));
+    }
+
+    #[test]
+    fn poster_sidecar_accepts_common_image_types() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("game.ts");
+        std::fs::write(&video, b"").unwrap();
+
+        let sidecar = dir.path().join("game.png");
+        std::fs::write(&sidecar, b"").unwrap();
+        assert_eq!(poster_sidecar(&video), Some(sidecar));
+    }
+
+    #[test]
+    fn poster_sidecar_accepts_upper_case_extensions() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("game.ts");
+        std::fs::write(&video, b"").unwrap();
+
+        let sidecar = dir.path().join("game.JPG");
+        std::fs::write(&sidecar, b"upper").unwrap();
+
+        let poster = poster_sidecar(&video).expect("an upper-case image extension must be found");
+        // Case-insensitive filesystems may resolve the lower-case spelling.
+        assert_eq!(std::fs::read(poster).unwrap(), b"upper");
     }
 
     #[tokio::test]

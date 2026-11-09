@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::index::types::FileInfo;
+use crate::routes::poster::poster_url;
 use crate::scanner::MediaScanner;
 
 pub const UNMATCHED_CATALOG_ID: &str = "lanio-unmatched";
@@ -144,15 +145,18 @@ fn catalog_inner(
                 .index
                 .get_all_unmatched()
                 .into_iter()
-                .map(|file| Meta {
-                    id: file.id,
-                    content_type: "other".to_string(),
-                    name: file.title,
-                    poster: None,
-                    poster_shape: "poster".to_string(),
-                    release_info: None,
-                    description: None,
-                    app_extras: None,
+                .map(|file| {
+                    let poster = poster_url(&state.scanner.config, &file);
+                    Meta {
+                        id: file.id,
+                        content_type: "other".to_string(),
+                        name: file.title,
+                        poster,
+                        poster_shape: "poster".to_string(),
+                        release_info: None,
+                        description: None,
+                        app_extras: None,
+                    }
                 })
                 .collect()
         }
@@ -384,6 +388,31 @@ mod tests {
         assert!(json.get("description").is_none());
         assert!(json.get("releaseInfo").is_none());
         assert!(json.get("appExtras").is_none());
+    }
+
+    #[tokio::test]
+    async fn unmatched_catalog_uses_a_filename_matched_poster() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("2024 Brazilian Grand Prix.ts");
+        std::fs::write(&video, b"").unwrap();
+        std::fs::write(dir.path().join("2024 Brazilian Grand Prix.jpg"), b"").unwrap();
+
+        let state = make_test_state_with_unmatched(None, true);
+        state.scanner.index.insert_unmatched(UnmatchedFile {
+            id: "lanio-abc123".to_string(),
+            title: "2024 Brazilian Grand Prix.ts".to_string(),
+            file_path: video,
+            created: Some(1000),
+        });
+
+        let res = catalog_inner(
+            "other".to_string(),
+            UNMATCHED_CATALOG_ID.to_string(),
+            &state,
+        );
+
+        let json = serde_json::to_value(&res.metas[0]).unwrap();
+        assert_eq!(json["poster"], "http://localhost:8078/poster/lanio-abc123");
     }
 
     #[tokio::test]

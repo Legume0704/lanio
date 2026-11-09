@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enable with `UNMATCHED_CATALOG=true`; it is disabled by default and appears as a separate "Unmatched Files on Local Network" catalog
   - Only known video files are listed, newest first, using the filename as the title
   - Selecting a file plays it directly without transcoding
+  - A JPG, PNG, or WEBP beside a recording with the same basename is used as its poster; there is no folder-level lookup
   - Unmatched files are logged once, as a notice instead of warnings when the catalog is enabled, and counted as unmatched rather than failed in the scan summary
   - Matched movies and series are unchanged, and a file that later matches is removed from the unmatched catalog
 

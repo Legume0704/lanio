@@ -159,6 +159,21 @@ async fn stream_inner(
     }))
 }
 
+/// Builds a URL on this add-on, including the auth token when one is set.
+/// `suffix` is the route and query, e.g. `video?path=...` or `poster/lanio-...`.
+pub fn authenticated_url(config: &Config, suffix: &str) -> String {
+    let base_url = config
+        .base_url
+        .as_ref()
+        .map(|s| s.trim_end_matches('/').to_string())
+        .unwrap_or_else(|| format!("http://localhost:{}", config.port));
+
+    match config.auth_token {
+        Some(ref token) => format!("{}/{}/{}", base_url, token, suffix),
+        None => format!("{}/{}", base_url, suffix),
+    }
+}
+
 /// Builds the Stremio stream object for a file. Files are served as-is, with
 /// range support, so playback never transcodes.
 pub fn stream_for_file(title: &str, file_path: &FilePath, config: &Config) -> Stream {
@@ -166,18 +181,7 @@ pub fn stream_for_file(title: &str, file_path: &FilePath, config: &Config) -> St
     let encoded_path =
         general_purpose::URL_SAFE_NO_PAD.encode(file_path.to_string_lossy().as_bytes());
 
-    // Construct stream URL
-    let base_url = config
-        .base_url
-        .as_ref()
-        .map(|s| s.trim_end_matches('/').to_string())
-        .unwrap_or_else(|| format!("http://localhost:{}", config.port));
-
-    let stream_url = if let Some(ref token) = config.auth_token {
-        format!("{}/{}/video?path={}", base_url, token, encoded_path)
-    } else {
-        format!("{}/video?path={}", base_url, encoded_path)
-    };
+    let stream_url = authenticated_url(config, &format!("video?path={}", encoded_path));
 
     let mut display = format!("🎞️ {}", title);
     if let Some(file_name) = file_path.file_name().and_then(|n| n.to_str()) {
