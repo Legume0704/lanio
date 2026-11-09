@@ -36,6 +36,18 @@ pub struct ParsedMetadata {
     pub episode: Option<u16>,
 }
 
+/// A scanned video file that could not be matched to a TMDB entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnmatchedFile {
+    /// Stable, generated ID used by the unmatched catalog and stream routes.
+    pub id: String,
+    /// Filename, used as the display title.
+    pub title: String,
+    pub file_path: PathBuf,
+    /// Creation time in milliseconds since the Unix epoch, used for ordering.
+    pub created: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub enum IndexEntry {
     Movie(FileInfo),

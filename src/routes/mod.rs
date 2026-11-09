@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod health;
 pub mod home;
 pub mod manifest;
+pub mod meta;
 pub mod rescan;
 pub mod stream;
 
@@ -20,6 +21,7 @@ use catalog::{catalog_handler, CatalogState};
 use health::health_handler;
 use home::home_handler;
 use manifest::get_manifest;
+use meta::meta_handler;
 use rescan::rescan_handler;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -54,7 +56,10 @@ fn build_stremio_subrouter(scanner: &Arc<MediaScanner>, config: &Arc<Config>) ->
 
     let subrouter = Router::new()
         .route("/manifest.json", get(get_manifest))
+        .with_state(Arc::clone(config))
         .route("/stream/:type/:id", get(stream_handler))
+        .with_state(stream_state.clone())
+        .route("/meta/:type/:id", get(meta_handler))
         .with_state(stream_state)
         .route("/catalog/:type/:id", get(catalog_handler))
         .with_state(catalog_state)

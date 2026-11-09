@@ -8,6 +8,8 @@ use std::sync::Arc;
 use crate::index::types::FileInfo;
 use crate::scanner::MediaScanner;
 
+pub const UNMATCHED_CATALOG_ID: &str = "lanio-unmatched";
+
 #[derive(Debug, Serialize)]
 pub struct CatalogResponse {
     pub metas: Vec<Meta>,
@@ -136,6 +138,24 @@ fn catalog_inner(
                 meta_from_file_info(imdb_id, "series", &file_info, poster)
             })
             .collect(),
+        "other" if catalog_id == UNMATCHED_CATALOG_ID && state.scanner.config.unmatched_catalog => {
+            state
+                .scanner
+                .index
+                .get_all_unmatched()
+                .into_iter()
+                .map(|file| Meta {
+                    id: file.id,
+                    content_type: "other".to_string(),
+                    name: file.title,
+                    poster: None,
+                    poster_shape: "poster".to_string(),
+                    release_info: None,
+                    description: None,
+                    app_extras: None,
+                })
+                .collect()
+        }
         _ => {
             tracing::warn!("Invalid catalog request: {}/{}", content_type, catalog_id);
             vec![]
@@ -151,12 +171,19 @@ fn catalog_inner(
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::index::types::{ContentType, FileInfo, ParsedMetadata};
+    use crate::index::types::{ContentType, FileInfo, ParsedMetadata, UnmatchedFile};
     use crate::index::MediaIndex;
     use crate::metadata::TmdbClient;
     use std::path::PathBuf;
 
     fn make_test_state(poster_url: Option<String>) -> CatalogState {
+        make_test_state_with_unmatched(poster_url, false)
+    }
+
+    fn make_test_state_with_unmatched(
+        poster_url: Option<String>,
+        unmatched_catalog: bool,
+    ) -> CatalogState {
         let config = Arc::new(Config {
             media_path: PathBuf::from("/media"),
             port: 8078,
@@ -169,6 +196,7 @@ mod tests {
             auth_token: None,
             poster_url,
             scan_cron: None,
+            unmatched_catalog,
         });
 
         let index = Arc::new(MediaIndex::new());
@@ -329,5 +357,50 @@ mod tests {
         assert!(json.get("releaseInfo").is_none());
         assert!(json.get("description").is_none());
         assert!(json.get("appExtras").is_none());
+    }
+
+    #[tokio::test]
+    async fn unmatched_catalog_lists_filenames_without_metadata() {
+        let state = make_test_state_with_unmatched(None, true);
+        state.scanner.index.insert_unmatched(UnmatchedFile {
+            id: "lanio-abc123".to_string(),
+            title: "2024 Brazilian Grand Prix.ts".to_string(),
+            file_path: PathBuf::from("/media/2024 Brazilian Grand Prix.ts"),
+            created: Some(1000),
+        });
+
+        let res = catalog_inner(
+            "other".to_string(),
+            UNMATCHED_CATALOG_ID.to_string(),
+            &state,
+        );
+
+        assert_eq!(res.metas.len(), 1);
+        let json = serde_json::to_value(&res.metas[0]).unwrap();
+        assert_eq!(json["id"], "lanio-abc123");
+        assert_eq!(json["type"], "other");
+        assert_eq!(json["name"], "2024 Brazilian Grand Prix.ts");
+        assert!(json.get("poster").is_none());
+        assert!(json.get("description").is_none());
+        assert!(json.get("releaseInfo").is_none());
+        assert!(json.get("appExtras").is_none());
+    }
+
+    #[tokio::test]
+    async fn unmatched_catalog_is_empty_when_disabled() {
+        let state = make_test_state_with_unmatched(None, false);
+        state.scanner.index.insert_unmatched(UnmatchedFile {
+            id: "lanio-abc123".to_string(),
+            title: "2024 Brazilian Grand Prix.ts".to_string(),
+            file_path: PathBuf::from("/media/2024 Brazilian Grand Prix.ts"),
+            created: Some(1000),
+        });
+
+        let res = catalog_inner(
+            "other".to_string(),
+            UNMATCHED_CATALOG_ID.to_string(),
+            &state,
+        );
+        assert!(res.metas.is_empty());
     }
 }

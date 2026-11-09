@@ -144,6 +144,16 @@ pub async fn start_server(
     password: Option<&str>,
     scan_cron: Option<&str>,
 ) -> String {
+    start_server_with_unmatched(media_path, tmdb_base_url, password, scan_cron, false).await
+}
+
+pub async fn start_server_with_unmatched(
+    media_path: &std::path::Path,
+    tmdb_base_url: &str,
+    password: Option<&str>,
+    scan_cron: Option<&str>,
+    unmatched_catalog: bool,
+) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let base_url = format!("http://{}", addr);
@@ -162,6 +172,11 @@ pub async fn start_server(
     match scan_cron {
         Some(c) => std::env::set_var("SCAN_CRON", c),
         None => std::env::remove_var("SCAN_CRON"),
+    }
+    if unmatched_catalog {
+        std::env::set_var("UNMATCHED_CATALOG", "true");
+    } else {
+        std::env::remove_var("UNMATCHED_CATALOG");
     }
 
     tokio::spawn(async move {
@@ -233,4 +248,26 @@ pub async fn health_scanning(client: &reqwest::Client, base_url: &str) -> Option
         .ok()?;
     let json: serde_json::Value = resp.json().await.ok()?;
     json["scanning"].as_bool()
+}
+
+pub async fn catalog_metas(
+    client: &reqwest::Client,
+    base_url: &str,
+    content_type: &str,
+    catalog_id: &str,
+) -> Vec<serde_json::Value> {
+    let resp = client
+        .get(format!(
+            "{}/catalog/{}/{}",
+            base_url, content_type, catalog_id
+        ))
+        .send()
+        .await;
+    match resp {
+        Ok(response) => match response.json::<serde_json::Value>().await {
+            Ok(json) => json["metas"].as_array().cloned().unwrap_or_default(),
+            Err(_) => Vec::new(),
+        },
+        Err(_) => Vec::new(),
+    }
 }

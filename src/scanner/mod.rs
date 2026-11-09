@@ -1,11 +1,12 @@
 pub mod parser;
 
 use crate::config::Config;
-use crate::index::types::{ContentType, FileInfo, ParsedMetadata};
+use crate::index::types::{ContentType, FileInfo, ParsedMetadata, UnmatchedFile};
 use crate::index::MediaIndex;
 use crate::metadata::TmdbClient;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parser::{dir_chain, extract_imdb_id, parse_filename, parse_season_episode, DirKind};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -15,6 +16,42 @@ use walkdir::WalkDir;
 const VIDEO_EXTENSIONS: &[&str] = &[
     "mkv", "mp4", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "m2ts", "ts", "vob",
 ];
+
+/// Prefix for IDs generated for files that have no TMDB match.
+pub const UNMATCHED_ID_PREFIX: &str = "lanio-";
+
+/// A stable ID for an unmatched file, derived from its path so it survives
+/// rescans and the file keeps the same Stremio identity.
+pub fn unmatched_id(file_path: &Path) -> String {
+    let hash = Sha256::digest(file_path.to_string_lossy().as_bytes());
+    let suffix: String = hash
+        .iter()
+        .take(16)
+        .map(|byte| format!("{:02x}", byte))
+        .collect();
+    format!("{}{}", UNMATCHED_ID_PREFIX, suffix)
+}
+
+fn unmatched_file(file_path: &Path) -> UnmatchedFile {
+    let title = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string();
+
+    let created = std::fs::metadata(file_path)
+        .ok()
+        .and_then(|metadata| metadata.created().or_else(|_| metadata.modified()).ok())
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64);
+
+    UnmatchedFile {
+        id: unmatched_id(file_path),
+        title,
+        file_path: file_path.to_path_buf(),
+        created,
+    }
+}
 
 pub struct MediaScanner {
     pub index: Arc<MediaIndex>,
@@ -163,6 +200,22 @@ impl MediaScanner {
         false
     }
 
+    /// When enabled, keep a file that TMDB could not identify in the
+    /// unmatched catalog so it can still be played from Stremio. Either way,
+    /// log the file once: as a notice when it is still playable, or as a
+    /// warning when it is skipped.
+    fn note_unmatched(&self, file_path: &Path) {
+        if self.config.unmatched_catalog {
+            tracing::info!(
+                "No TMDB match, listing as unmatched: {}",
+                file_path.to_string_lossy()
+            );
+            self.index.insert_unmatched(unmatched_file(file_path));
+        } else {
+            tracing::warn!("No TMDB match, skipping: {}", file_path.to_string_lossy());
+        }
+    }
+
     async fn handle_creation(&self, path: &Path) {
         if self.is_existing_video_file(path) {
             tracing::info!("Detected new file: {:?}", path);
@@ -270,11 +323,13 @@ impl MediaScanner {
 
         let mut successful = 0;
         let mut failed = 0;
+        let mut unmatched = 0;
 
         // Index each file
         for file_path in files {
             match self.index_file(&file_path).await {
                 Ok(true) => successful += 1,
+                Ok(false) if self.config.unmatched_catalog => unmatched += 1,
                 Ok(false) => failed += 1,
                 Err(e) => {
                     tracing::error!("Error indexing {:?}: {}", file_path, e);
@@ -284,9 +339,10 @@ impl MediaScanner {
         }
 
         tracing::info!(
-            "Scan complete: {} successful, {} failed",
+            "Scan complete: {} successful, {} failed, {} unmatched",
             successful,
-            failed
+            failed,
+            unmatched
         );
 
         Ok(())
@@ -385,11 +441,7 @@ impl MediaScanner {
         // An IMDb ID override is enough on its own — TMDB supplies the title,
         // so an unparseable title must not drop the file.
         if title.is_empty() && imdb_id.is_none() {
-            tracing::warn!(
-                "Could not extract title from: {} {}",
-                file_name,
-                if is_series { "or the show folder" } else { "" }
-            );
+            self.note_unmatched(file_path);
             return Ok(false);
         }
 
@@ -404,7 +456,7 @@ impl MediaScanner {
         };
 
         let Some(metadata) = metadata else {
-            tracing::warn!("Could not find IMDb ID for: {}", title);
+            self.note_unmatched(file_path);
             return Ok(false);
         };
 
@@ -414,6 +466,9 @@ impl MediaScanner {
         if metadata.year.is_some() {
             year = metadata.year;
         }
+
+        // A file that now matches must leave the unmatched catalog.
+        self.index.remove_unmatched_by_path(file_path);
 
         // Create FileInfo
         let file_info = FileInfo {
@@ -481,6 +536,14 @@ mod tests {
     }
 
     fn make_scanner_for_media(tmdb_base_url: &str, media_path: &Path) -> MediaScanner {
+        make_scanner_for_media_with_unmatched(tmdb_base_url, media_path, false)
+    }
+
+    fn make_scanner_for_media_with_unmatched(
+        tmdb_base_url: &str,
+        media_path: &Path,
+        unmatched_catalog: bool,
+    ) -> MediaScanner {
         let config = Arc::new(Config {
             media_path: media_path.to_path_buf(),
             port: 8078,
@@ -493,6 +556,7 @@ mod tests {
             auth_token: None,
             poster_url: None,
             scan_cron: None,
+            unmatched_catalog,
         });
         MediaScanner::new(
             Arc::new(MediaIndex::new()),
@@ -598,6 +662,7 @@ mod tests {
             auth_token: None,
             poster_url: None,
             scan_cron: Some("0 3 * * *".to_string()),
+            unmatched_catalog: false,
         };
         let scanner = MediaScanner::new(
             Arc::new(MediaIndex::new()),
@@ -1111,6 +1176,100 @@ mod tests {
         assert!(matches!(
             scanner.index.get("tt0903747"),
             Some(IndexEntry::Series(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn unmatched_file_is_listed_when_enabled() {
+        let server = httpmock::MockServer::start();
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media_with_unmatched(&server.base_url(), dir.path(), true);
+
+        let file = dir.path().join("2024 Brazilian Grand Prix.ts");
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(
+            !scanner.index_file(&file).await.unwrap(),
+            "a file with no TMDB match is not indexed as a movie or series"
+        );
+
+        let unmatched = scanner.index.get_all_unmatched();
+        assert_eq!(unmatched.len(), 1);
+        assert_eq!(unmatched[0].title, "2024 Brazilian Grand Prix.ts");
+        assert_eq!(unmatched[0].file_path, file);
+        assert!(unmatched[0].id.starts_with(UNMATCHED_ID_PREFIX));
+        assert!(
+            unmatched[0].created.is_some(),
+            "the file's creation time is recorded for newest-first ordering"
+        );
+    }
+
+    #[tokio::test]
+    async fn unmatched_file_is_not_listed_when_disabled() {
+        let server = httpmock::MockServer::start();
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media_with_unmatched(&server.base_url(), dir.path(), false);
+
+        let file = dir.path().join("2024 Brazilian Grand Prix.ts");
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(!scanner.index_file(&file).await.unwrap());
+        assert!(
+            scanner.index.get_all_unmatched().is_empty(),
+            "unmatched files must not be tracked unless the feature is enabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn unmatched_id_is_stable_for_the_same_path() {
+        let path = Path::new("/media/recordings/race.ts");
+        assert_eq!(unmatched_id(path), unmatched_id(path));
+        assert_ne!(
+            unmatched_id(path),
+            unmatched_id(Path::new("/media/recordings/other.ts"))
+        );
+    }
+
+    #[tokio::test]
+    async fn matching_a_file_removes_it_from_the_unmatched_catalog() {
+        let server = httpmock::MockServer::start();
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = make_scanner_for_media_with_unmatched(&server.base_url(), dir.path(), true);
+
+        let file = dir.path().join("Sintel.2010.ts");
+        std::fs::write(&file, b"").unwrap();
+
+        assert!(!scanner.index_file(&file).await.unwrap());
+        assert_eq!(scanner.index.get_all_unmatched().len(), 1);
+
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/search/movie")
+                .query_param("query", "Sintel")
+                .query_param("year", "2010");
+            then.status(200).json_body(serde_json::json!({
+                "results": [{
+                    "id": 45745, "title": "Sintel", "release_date": "2010-09-27"
+                }]
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/movie/45745");
+            then.status(200).json_body(serde_json::json!({
+                "imdb_id": "tt1727587",
+                "title": "Sintel",
+                "release_date": "2010-09-27"
+            }));
+        });
+
+        assert!(scanner.index_file(&file).await.unwrap());
+        assert!(
+            scanner.index.get_all_unmatched().is_empty(),
+            "a file that now matches must not stay in the unmatched catalog"
+        );
+        assert!(matches!(
+            scanner.index.get("tt1727587"),
+            Some(IndexEntry::Movie(_))
         ));
     }
 }

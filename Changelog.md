@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0]
+
+- Add an opt-in catalog for video files that have no TMDB match, such as `.ts` sports recordings
+  - Enable with `UNMATCHED_CATALOG=true`; it is disabled by default and appears as a separate "Unmatched Files on Local Network" catalog
+  - Only known video files are listed, newest first, using the filename as the title
+  - Selecting a file plays it directly without transcoding
+  - Unmatched files are logged once, as a notice instead of warnings when the catalog is enabled, and counted as unmatched rather than failed in the scan summary
+  - Matched movies and series are unchanged, and a file that later matches is removed from the unmatched catalog
+
 ## [0.5.9]
 
 - Remove dependabot
