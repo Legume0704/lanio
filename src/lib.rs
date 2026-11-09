@@ -40,6 +40,9 @@ pub async fn run(listener: Option<TcpListener>) -> anyhow::Result<()> {
     if let Some(ref scan_cron) = config.scan_cron {
         tracing::info!("Scheduled rescan: {}", scan_cron);
     }
+    if config.unmatched_catalog {
+        tracing::info!("Unmatched file catalog: enabled");
+    }
     if config.auth_token.is_some() {
         tracing::info!("Authentication: enabled (PASSWORD is set)");
     } else {

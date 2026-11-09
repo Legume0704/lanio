@@ -48,6 +48,11 @@ pub struct Config {
     /// Supports standard 5-part ("0 3 * * *"), 6-part, or 7-part cron expressions.
     #[serde(default)]
     pub scan_cron: Option<String>,
+
+    /// When enabled, video files that have no TMDB match are listed in a
+    /// separate catalog so they can still be played in Stremio.
+    #[serde(default)]
+    pub unmatched_catalog: bool,
 }
 
 fn default_media_path() -> PathBuf {
@@ -146,6 +151,7 @@ mod tests {
             auth_token: Some(compute_token(password)),
             poster_url: None,
             scan_cron: None,
+            unmatched_catalog: false,
         }
     }
 
@@ -162,6 +168,7 @@ mod tests {
             auth_token: None,
             poster_url: None,
             scan_cron: None,
+            unmatched_catalog: false,
         }
     }
 
@@ -291,5 +298,26 @@ mod tests {
         assert!(config_empty.parsed_scan_cron().unwrap().is_none());
 
         std::env::remove_var("SCAN_CRON");
+    }
+
+    #[test]
+    fn unmatched_catalog_defaults_to_disabled() {
+        let config = config_no_auth();
+        assert!(!config.unmatched_catalog);
+    }
+
+    #[test]
+    fn config_from_env_parses_unmatched_catalog() {
+        std::env::set_var("TMDB_API_KEY", "test_key");
+
+        std::env::set_var("UNMATCHED_CATALOG", "true");
+        let config = Config::from_env().unwrap();
+        assert!(config.unmatched_catalog);
+
+        std::env::set_var("UNMATCHED_CATALOG", "false");
+        let config = Config::from_env().unwrap();
+        assert!(!config.unmatched_catalog);
+
+        std::env::remove_var("UNMATCHED_CATALOG");
     }
 }

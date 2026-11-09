@@ -67,7 +67,7 @@ impl TmdbClient {
         let search_response: TmdbSearchResponse = response.json().await.ok()?;
 
         if search_response.results.is_empty() {
-            tracing::warn!("No TMDB results for movie: {}", title);
+            tracing::debug!("No TMDB results for movie: {}", title);
             return None;
         }
 
@@ -134,7 +134,7 @@ impl TmdbClient {
         let search_response: TmdbSearchResponse = response.json().await.ok()?;
 
         if search_response.results.is_empty() {
-            tracing::warn!("No TMDB results for TV show: {}", title);
+            tracing::debug!("No TMDB results for TV show: {}", title);
             return None;
         }
 
@@ -246,7 +246,7 @@ impl TmdbClient {
                 tmdb_votes: result.vote_count,
             }
         } else {
-            tracing::warn!("No TMDB results for IMDb ID: {}", imdb_id);
+            tracing::debug!("No TMDB results for IMDb ID: {}", imdb_id);
             return None;
         };
 

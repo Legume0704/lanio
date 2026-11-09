@@ -1,16 +1,18 @@
 pub mod types;
 
 use dashmap::DashMap;
-use types::{FileInfo, IndexEntry};
+use types::{FileInfo, IndexEntry, UnmatchedFile};
 
 pub struct MediaIndex {
     entries: DashMap<String, IndexEntry>,
+    unmatched: DashMap<String, UnmatchedFile>,
 }
 
 impl MediaIndex {
     pub fn new() -> Self {
         Self {
             entries: DashMap::new(),
+            unmatched: DashMap::new(),
         }
     }
 
@@ -47,6 +49,30 @@ impl MediaIndex {
                 }
             })
             .or_insert_with(|| IndexEntry::Series(vec![file_info]));
+    }
+
+    pub fn insert_unmatched(&self, file: UnmatchedFile) {
+        self.unmatched.insert(file.id.clone(), file);
+    }
+
+    pub fn get_unmatched(&self, id: &str) -> Option<UnmatchedFile> {
+        self.unmatched.get(id).map(|entry| entry.value().clone())
+    }
+
+    /// All unmatched files, newest first. Files with an unknown creation time
+    /// sort last, with the filename as a stable tie-breaker.
+    pub fn get_all_unmatched(&self) -> Vec<UnmatchedFile> {
+        let mut files: Vec<UnmatchedFile> = self
+            .unmatched
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        files.sort_by(|a, b| {
+            b.created
+                .cmp(&a.created)
+                .then_with(|| a.title.cmp(&b.title))
+        });
+        files
     }
 
     pub fn remove_movie(&self, imdb_id: &str) {
@@ -106,6 +132,8 @@ impl MediaIndex {
         for (imdb_id, file_path) in series_removals {
             self.remove_episode(&imdb_id, &file_path);
         }
+
+        self.remove_unmatched_by_dir(dir_path);
     }
 
     pub fn remove_by_path(&self, file_path: &std::path::Path) {
@@ -140,10 +168,22 @@ impl MediaIndex {
         for imdb_id in series_ids {
             self.remove_episode(&imdb_id, file_path);
         }
+
+        self.remove_unmatched_by_path(file_path);
+    }
+
+    pub fn remove_unmatched_by_path(&self, file_path: &std::path::Path) {
+        self.unmatched.retain(|_, file| file.file_path != file_path);
+    }
+
+    pub fn remove_unmatched_by_dir(&self, dir_path: &std::path::Path) {
+        self.unmatched
+            .retain(|_, file| !file.file_path.starts_with(dir_path));
     }
 
     pub fn clear(&self) {
         self.entries.clear();
+        self.unmatched.clear();
     }
 
     pub fn get_all_movies(&self) -> Vec<(String, FileInfo)> {
@@ -182,7 +222,7 @@ impl Default for MediaIndex {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use types::{ContentType, ParsedMetadata};
+    use types::{ContentType, ParsedMetadata, UnmatchedFile};
 
     fn movie(imdb_id: &str, path: &str) -> types::FileInfo {
         types::FileInfo {
@@ -300,5 +340,80 @@ mod tests {
         index.remove_by_dir(&PathBuf::from("/media/movies"));
         assert!(index.get("tt0000007").is_none());
         assert!(index.get("tt0000008").is_some());
+    }
+
+    fn unmatched(id: &str, path: &str, created: Option<u64>) -> UnmatchedFile {
+        UnmatchedFile {
+            id: id.to_string(),
+            title: path.rsplit('/').next().unwrap_or(path).to_string(),
+            file_path: PathBuf::from(path),
+            created,
+        }
+    }
+
+    #[test]
+    fn insert_and_get_unmatched() {
+        let index = MediaIndex::new();
+        index.insert_unmatched(unmatched("lanio-a", "/media/recording.ts", Some(100)));
+
+        let file = index.get_unmatched("lanio-a").unwrap();
+        assert_eq!(file.title, "recording.ts");
+        assert_eq!(file.created, Some(100));
+        assert!(index.get_unmatched("lanio-b").is_none());
+    }
+
+    #[test]
+    fn unmatched_files_are_newest_first() {
+        let index = MediaIndex::new();
+        index.insert_unmatched(unmatched("lanio-a", "/media/old.ts", Some(100)));
+        index.insert_unmatched(unmatched("lanio-b", "/media/new.ts", Some(300)));
+        index.insert_unmatched(unmatched("lanio-c", "/media/middle.ts", Some(200)));
+
+        let ids: Vec<String> = index
+            .get_all_unmatched()
+            .into_iter()
+            .map(|file| file.id)
+            .collect();
+        assert_eq!(ids, vec!["lanio-b", "lanio-c", "lanio-a"]);
+    }
+
+    #[test]
+    fn unmatched_files_without_a_created_time_sort_last() {
+        let index = MediaIndex::new();
+        index.insert_unmatched(unmatched("lanio-a", "/media/old.ts", None));
+        index.insert_unmatched(unmatched("lanio-b", "/media/new.ts", Some(300)));
+
+        let ids: Vec<String> = index
+            .get_all_unmatched()
+            .into_iter()
+            .map(|file| file.id)
+            .collect();
+        assert_eq!(ids, vec!["lanio-b", "lanio-a"]);
+    }
+
+    #[test]
+    fn remove_by_path_removes_matching_unmatched_file() {
+        let index = MediaIndex::new();
+        index.insert_unmatched(unmatched("lanio-a", "/media/recording.ts", Some(100)));
+        index.remove_by_path(&PathBuf::from("/media/recording.ts"));
+        assert!(index.get_unmatched("lanio-a").is_none());
+    }
+
+    #[test]
+    fn remove_by_dir_removes_unmatched_files_under_dir() {
+        let index = MediaIndex::new();
+        index.insert_unmatched(unmatched("lanio-a", "/media/recordings/a.ts", Some(100)));
+        index.insert_unmatched(unmatched("lanio-b", "/media/other/b.ts", Some(100)));
+        index.remove_by_dir(&PathBuf::from("/media/recordings"));
+        assert!(index.get_unmatched("lanio-a").is_none());
+        assert!(index.get_unmatched("lanio-b").is_some());
+    }
+
+    #[test]
+    fn clear_removes_unmatched_files() {
+        let index = MediaIndex::new();
+        index.insert_unmatched(unmatched("lanio-a", "/media/recording.ts", Some(100)));
+        index.clear();
+        assert!(index.get_all_unmatched().is_empty());
     }
 }

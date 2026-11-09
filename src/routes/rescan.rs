@@ -54,6 +54,7 @@ mod tests {
             auth_token: None,
             poster_url: None,
             scan_cron: None,
+            unmatched_catalog: false,
         });
 
         let index = Arc::new(MediaIndex::new());

@@ -9,6 +9,7 @@ use axum::{
 use base64::{engine::general_purpose, Engine as _};
 use serde::Deserialize;
 use serde::Serialize;
+use std::path::Path as FilePath;
 use std::sync::Arc;
 
 #[derive(Debug, Serialize)]
@@ -67,6 +68,30 @@ async fn stream_inner(
     let id = id.strip_suffix(".json").unwrap_or(&id).to_string();
 
     tracing::debug!("Stream request: type={}, id={}", content_type, id);
+
+    if content_type == "other" {
+        if !state.config.unmatched_catalog {
+            return Ok(Json(StreamResponse { streams: vec![] }));
+        }
+
+        return match state.scanner.index.get_unmatched(&id) {
+            Some(file) => {
+                tracing::info!(
+                    "Unmatched file found. ID={} Path={}",
+                    id,
+                    file.file_path.to_string_lossy()
+                );
+                let stream = stream_for_file(&file.title, &file.file_path, &state.config);
+                Ok(Json(StreamResponse {
+                    streams: vec![stream],
+                }))
+            }
+            None => {
+                tracing::info!("Unmatched file not found. ID={}", id);
+                Ok(Json(StreamResponse { streams: vec![] }))
+            }
+        };
+    }
 
     let file_info = if content_type == "series" && id.contains(':') {
         // Parse season:episode from ID (format: tt1234567:1:1)
@@ -127,36 +152,46 @@ async fn stream_inner(
 
     tracing::debug!("  Found: {} ({:?})", file_info.title, file_info.file_path);
 
-    // Encode file path for URL. URL-safe so '+' isn't decoded as a space.
-    let encoded_path =
-        general_purpose::URL_SAFE_NO_PAD.encode(file_info.file_path.to_string_lossy().as_bytes());
+    let stream = stream_for_file(&file_info.title, &file_info.file_path, &state.config);
 
-    // Construct stream URL
-    let base_url = state
-        .config
+    Ok(Json(StreamResponse {
+        streams: vec![stream],
+    }))
+}
+
+/// Builds a URL on this add-on, including the auth token when one is set.
+/// `suffix` is the route and query, e.g. `video?path=...` or `poster/lanio-...`.
+pub fn authenticated_url(config: &Config, suffix: &str) -> String {
+    let base_url = config
         .base_url
         .as_ref()
         .map(|s| s.trim_end_matches('/').to_string())
-        .unwrap_or_else(|| format!("http://localhost:{}", state.config.port));
+        .unwrap_or_else(|| format!("http://localhost:{}", config.port));
 
-    let stream_url = if let Some(ref token) = state.config.auth_token {
-        format!("{}/{}/video?path={}", base_url, token, encoded_path)
-    } else {
-        format!("{}/video?path={}", base_url, encoded_path)
-    };
+    match config.auth_token {
+        Some(ref token) => format!("{}/{}/{}", base_url, token, suffix),
+        None => format!("{}/{}", base_url, suffix),
+    }
+}
 
-    let mut display = format!("🎞️ {}", file_info.title);
-    if let Some(file_name) = file_info.file_path.file_name().and_then(|n| n.to_str()) {
+/// Builds the Stremio stream object for a file. Files are served as-is, with
+/// range support, so playback never transcodes.
+pub fn stream_for_file(title: &str, file_path: &FilePath, config: &Config) -> Stream {
+    // Encode file path for URL. URL-safe so '+' isn't decoded as a space.
+    let encoded_path =
+        general_purpose::URL_SAFE_NO_PAD.encode(file_path.to_string_lossy().as_bytes());
+
+    let stream_url = authenticated_url(config, &format!("video?path={}", encoded_path));
+
+    let mut display = format!("🎞️ {}", title);
+    if let Some(file_name) = file_path.file_name().and_then(|n| n.to_str()) {
         display = format!("{display}\n📦 {file_name}");
     }
 
     // Get file size and filename
-    let file_size = std::fs::metadata(&file_info.file_path)
-        .ok()
-        .map(|m| m.len());
+    let file_size = std::fs::metadata(file_path).ok().map(|m| m.len());
 
-    let filename = file_info
-        .file_path
+    let filename = file_path
         .file_name()
         .and_then(|n| n.to_str())
         .map(|s| s.to_string());
@@ -169,7 +204,7 @@ async fn stream_inner(
         );
     }
 
-    let stream = Stream {
+    Stream {
         url: stream_url,
         title: display,
         name: "🏠 Lanio".to_string(),
@@ -179,9 +214,5 @@ async fn stream_inner(
             video_size: file_size,
             filename,
         },
-    };
-
-    Ok(Json(StreamResponse {
-        streams: vec![stream],
-    }))
+    }
 }
